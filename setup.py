@@ -29,6 +29,7 @@ setup(
         "waitress",
         "pyonmttok>=1.23,<2",
         "pyyaml",
+        "youtokentome"
     ],
     entry_points={
         "console_scripts": [

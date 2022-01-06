@@ -431,3 +431,163 @@ class ONMTTokenizerTransform(TokenizerTransform):
             self._get_subword_kwargs(side='tgt'))
         repr_str += ', tgt_onmttok_kwargs={}'.format(self.tgt_other_kwargs)
         return repr_str
+
+
+@register_transform(name='youtokentome')
+class YTTMTokenizerTransform(TokenizerTransform):
+    """YouTokenToMe Tokenizer transform class."""
+
+    def __init__(self, opts):
+        """Initialize necessary options for YouTokenToMe Tokenizer."""
+
+        super().__init__(opts)
+
+    def _set_seed(self, seed):
+        """set seed to ensure reproducibility."""
+        import random
+        random.seed(seed)
+
+    @classmethod
+    def add_options(cls, parser):
+        """Available options related to Subword."""
+        super().add_options(parser)
+        group = parser.add_argument_group('YTTMTOK')
+
+        group.add('-src_subword_n_threads', '--src_subword_n_threads',
+                  type=int, default=-1,
+                  help="Number of parallel threads used to"
+                  "run for src If equal to -1, then the maximum number"
+                  "of threads available will be used."
+                  "Note that the number of threads is limited by 8 ")
+        group.add('-tgt_subword_n_threads', '--tgt_subword_n_threads',
+                  type=int, default=-1)
+        group.add('-src_yttm_encoding_kwargs', '--src_yttm_encoding_kwargs',
+                  type=str,
+                  default="{'bos': 'False', 'eos': 'False',"
+                          " 'reverse': 'False'}",
+                  help="Other yttm encoding options for src in dict string, "
+                  "except dropout probability (must be among bos, eos"
+                  "reverse, stream")
+        group.add('-tgt_yttm_encoding_kwargs', '--tgt_yttm_encoding_kwargs',
+                  type=str,
+                  default="{'bos': 'False', 'eos': 'False',"
+                          " 'reverse': 'False'}")
+
+    @classmethod
+    def _validate_options(cls, opts):
+        """Extra checks for YouTokenToMe Tokenizer options."""
+        super()._validate_options(opts)
+        src_encoding_kwargs_dict = eval(opts.src_yttm_encoding_kwargs)
+        tgt_encoding_kwargs_dict = eval(opts.tgt_yttm_encoding_kwargs)
+        if not isinstance(src_encoding_kwargs_dict, dict):
+            raise ValueError("-src_yttm_encoding_kwargs isn't"
+                             "a dict valid string.")
+        if not isinstance(tgt_encoding_kwargs_dict, dict):
+            raise ValueError("-tgt_yttm_encoding_kwargs isn't"
+                             "a dict valid string.")
+        opts.src_yttm_encoding_kwargs = src_encoding_kwargs_dict
+        opts.tgt_yttm_encoding_kwargs = tgt_encoding_kwargs_dict
+
+    def _parse_opts(self):
+        super()._parse_opts()
+        self.src_subword_type = self.opts.src_subword_type
+        self.tgt_subword_type = self.opts.tgt_subword_type
+        self.src_subword_model = self.opts.src_subword_model
+        self.tgt_subword_model = self.opts.tgt_subword_model
+        self.src_n_threads = self.opts.src_subword_n_threads
+        self.tgt_n_threads = self.opts.tgt_subword_n_threads
+        self.src_subword_alpha = self.opts.src_subword_alpha
+        self.tgt_subword_alpha = self.opts.tgt_subword_alpha
+        logger.info("Parsed youtokentome encoding kwargs for src: {}".format(
+            self.opts.src_yttm_encoding_kwargs))
+        logger.info("Parsed youtokentome encoding kwargs for tgt: {}".format(
+            self.opts.src_yttm_encoding_kwargs))
+        self.src_encoding_kwargs = self.opts.src_yttm_encoding_kwargs
+        self.tgt_encoding_kwargs = self.opts.src_yttm_encoding_kwargs
+
+    def _get_subword_kwargs(self, side='src'):
+        """Return a dict containing kwargs relate to `side` subwords."""
+        subword_type = self.tgt_subword_type if side == 'tgt' \
+            else self.src_subword_type
+        subword_model = self.tgt_subword_model if side == 'tgt' \
+            else self.src_subword_model
+        subword_n_threads = self.tgt_n_threads if side == 'tgt' \
+            else self.src_n_threads
+        subword_alpha = self.tgt_subword_alpha if side == 'tgt' \
+            else self.src_subword_alpha
+        kwopts = dict()
+        if subword_type == 'yttm_bpe':
+            kwopts['subword_type'] = subword_type
+            kwopts['model'] = subword_model
+            kwopts['n_threads'] = subword_n_threads
+            kwopts['dropout_prob'] = subword_alpha
+        else:
+            logger.warning('No subword method will be applied.')
+        vocabulary_threshold = self.tgt_vocab_threshold if side == 'tgt' \
+            else self.src_vocab_threshold
+        vocabulary_path = self.tgt_subword_vocab if side == 'tgt' \
+            else self.src_subword_vocab
+        if vocabulary_threshold > 0 and vocabulary_path != "":
+            kwopts['vocabulary_path'] = vocabulary_path
+            kwopts['vocabulary_threshold'] = vocabulary_threshold
+        return kwopts
+
+    def warm_up(self, vocabs=None):
+        """Initialize Tokenizers with trained subword models."""
+        super().warm_up(None)
+        import youtokentome as yttm
+        src_subword_model = self.opts.src_subword_model
+        src_tokenizer = yttm.BPE(model=src_subword_model,
+                                 n_threads=self.src_n_threads)
+        if self.share_vocab:
+            self.load_models = {
+                'src': src_tokenizer,
+                'tgt': src_tokenizer
+            }
+        else:
+            tgt_subword_model = self.opts.tgt_subword_model
+            tgt_tokenizer = yttm.BPE(model=tgt_subword_model,
+                                     n_threads=self.tgt_n_threads)
+            self.load_models = {
+                'src': src_tokenizer,
+                'tgt': tgt_tokenizer
+            }
+
+    def _tokenize(self, tokens, side='src', is_train=False):
+        """Do OpenNMT Tokenizer's tokenize."""
+        import youtokentome as yttm
+        tokenizer = self.load_models[side]
+        sentence = ' '.join(tokens)
+        if side == 'src' or self.share_vocab:
+            subword_alpha = self.src_subword_alpha
+            encoding_kwargs = self.src_encoding_kwargs
+        else:
+            subword_alpha = self.tgt_subword_alpha
+            encoding_kwargs = self.tgt_encoding_kwargs
+        segmented = tokenizer.encode(sentence,
+                                     output_type=yttm.OutputType.SUBWORD,
+                                     dropout_prob=subword_alpha,
+                                     **encoding_kwargs)
+        return segmented
+
+    def apply(self, example, is_train=False, stats=None, **kwargs):
+        """Apply YouTokenToMe Tokenizer to src & tgt."""
+        src_out = self._tokenize(example['src'], 'src')
+        tgt_out = self._tokenize(example['tgt'], 'tgt')
+        if stats is not None:
+            n_words = len(example['src']) + len(example['tgt'])
+            n_subwords = len(src_out) + len(tgt_out)
+            stats.update(SubwordStats(n_subwords, n_words))
+        example['src'], example['tgt'] = src_out, tgt_out
+        return example
+
+    def _repr_args(self):
+        """Return str represent key arguments for class."""
+        repr_str = '{}={}'.format('share_vocab', self.share_vocab)
+        repr_str += ', src_subword_kwargs={}'.format(
+            self._get_subword_kwargs(side='src'))
+        repr_str += ', src_encoding_kwargs={}'.format(self.src_encoding_kwargs)
+        repr_str += ', tgt_subword_kwargs={}'.format(
+            self._get_subword_kwargs(side='tgt'))
+        repr_str += ', tgt_encoding_kwargs={}'.format(self.tgt_encoding_kwargs)
+        return repr_str
