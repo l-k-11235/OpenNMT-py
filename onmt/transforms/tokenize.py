@@ -27,6 +27,13 @@ class TokenizerTransform(Transform):
                   help="Path of subword model for src (or shared).")
         group.add("-tgt_subword_model", "--tgt_subword_model",
                   help="Path of subword model for tgt.")
+        group.add('-src_subword_type', '--src_subword_type',
+                  type=str, default='none',
+                  choices=['none', 'sentencepiece', 'bpe', 'yttm_bpe'],
+                  help="Type of subword model for src (or shared)")
+        group.add('-tgt_subword_type', '--tgt_subword_type',
+                  type=str, default='none',
+                  choices=['none', 'sentencepiece', 'bpe', 'yttm_bpe'])
 
         # subword regularization(or BPE dropout) options:
         group.add('-src_subword_nbest', '--src_subword_nbest',
@@ -288,15 +295,6 @@ class ONMTTokenizerTransform(TokenizerTransform):
         """Available options relate to Subword."""
         super().add_options(parser)
         group = parser.add_argument_group('Transform/Subword/ONMTTOK')
-        group.add('-src_subword_type', '--src_subword_type',
-                  type=str, default='none',
-                  choices=['none', 'sentencepiece', 'bpe'],
-                  help="Type of subword model for src (or shared) "
-                       "in pyonmttok.")
-        group.add('-tgt_subword_type', '--tgt_subword_type',
-                  type=str, default='none',
-                  choices=['none', 'sentencepiece', 'bpe'],
-                  help="Type of subword model for tgt in  pyonmttok.")
         group.add('-src_onmttok_kwargs', '--src_onmttok_kwargs', type=str,
                   default="{'mode': 'none'}",
                   help="Other pyonmttok options for src in dict string, "
@@ -451,8 +449,7 @@ class YTTMTokenizerTransform(TokenizerTransform):
     def add_options(cls, parser):
         """Available options related to Subword."""
         super().add_options(parser)
-        group = parser.add_argument_group('YTTMTOK')
-
+        group = parser.add_argument_group('Transform/YTTMTOK')
         group.add('-src_subword_n_threads', '--src_subword_n_threads',
                   type=int, default=-1,
                   help="Number of parallel threads used to"
