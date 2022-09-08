@@ -20,7 +20,6 @@ def get_scorers_cls(metric_names):
 
 
 __all__ = ["get_scorers_cls", "build_scorers"]
-#            "load_transforms", "save_transforms", "TransformPipe"]
 
 
 def register_scorer(metric):

@@ -7,7 +7,7 @@ class Scorer(object):
     def __init__(self, opts):
         self.opts = opts
 
-    def compute_score(self, preds, texts_refs):
+    def compute_score(self, preds, texts_ref, texts_src):
         raise NotImplementedError
 
 

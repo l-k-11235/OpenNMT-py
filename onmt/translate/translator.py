@@ -1233,16 +1233,28 @@ class GeneratorLM(Inference):
 
 class Detokenizer():
     """ Allow detokenizing sequences in batchs"""
-    def __init__(self, opt):
+    def __init__(self, opt, side):
         if 'onmt_tokenize' in opt.transforms:
             self.type = "pyonmttok"
-            self.tgt_onmttok_kwargs = opt.tgt_onmttok_kwargs
+            if side == "tgt":
+                self.onmttok_kwargs = opt.tgt_onmttok_kwargs
+            elif side == "src":
+                self.onmttok_kwargs = opt.src_onmttok_kwargs
         else:
-            if opt.tgt_subword_model is None:
-                raise ValueError(
-                    "Missing mandatory tokenizer option'tgt_subword_model'")
-            else:
-                self.model_path = opt.tgt_subword_model
+            if side == "tgt":
+                if opt.tgt_subword_model is None:
+                    raise ValueError(
+                        "Missing mandatory tokenizer option \
+                        `tgt_subword_model`")
+                else:
+                    self.model_path = opt.tgt_subword_model
+            elif side == "src":
+                if opt.src_subword_model is None:
+                    raise ValueError(
+                        "Missing mandatory tokenizer option \
+                        `src_subword_model`")
+                else:
+                    self.model_path = opt.src_subword_model
             if 'sentencepiece' in opt.transforms:
                 self.type = "sentencepiece"
             elif 'bpe' in opt.transforms:
@@ -1251,25 +1263,25 @@ class Detokenizer():
     def build_detokenizer(self):
         if self.type == "pyonmttok":
             import pyonmttok
-            self.tgt_detokenizer = pyonmttok.Tokenizer(
-                **self.tgt_onmttok_kwargs)
+            self.detokenizer = pyonmttok.Tokenizer(
+                **self.onmttok_kwargs)
         elif self.type == "sentencepiece":
             import sentencepiece as spm
-            self.tgt_detokenizer = spm.SentencePieceProcessor()
-            self.tgt_detokenizer.Load(self.model_path)
+            self.detokenizer = spm.SentencePieceProcessor()
+            self.detokenizer.Load(self.model_path)
         elif self.type == "subword-nmt":
             from subword_nmt.apply_bpe import BPE
-            with open(self.model_path, encoding='utf-8') as tgt_codes:
-                self.tgt_detokenizer = BPE(codes=tgt_codes, vocab=None)
-        return self.tgt_detokenizer
+            with open(self.model_path, encoding='utf-8') as codes:
+                self.detokenizer = BPE(codes=codes, vocab=None)
+        return self.detokenizer
 
     def _detokenize(self, tokens):
         if self.type == "pyonmttok":
-            detok = self.tgt_detokenizer.detokenize(tokens)
+            detok = self.detokenizer.detokenize(tokens)
         elif self.type == "sentencepiece":
-            detok = self.tgt_detokenizer.DecodePieces(tokens)
+            detok = self.detokenizer.DecodePieces(tokens)
         elif self.type == "subword-nmt":
-            detok = self.tgt_detokenizer.segment_tokens(tokens, dropout=0.0)
+            detok = self.detokenizer.segment_tokens(tokens, dropout=0.0)
         return detok
 
 
@@ -1279,8 +1291,10 @@ class ScoringPreparator():
     def __init__(self, fields, opt):
         self.fields = fields
         self.opt = opt
-        self.tgt_detokenizer = Detokenizer(opt)
+        self.tgt_detokenizer = Detokenizer(opt, side="tgt")
         self.tgt_detokenizer.build_detokenizer()
+        self.src_detokenizer = Detokenizer(opt, side="src")
+        self.src_detokenizer.build_detokenizer()
 
     def tokenize_batch(self, batch_side, side):
         """Convert a batch into a list of tokenized sentences"""
@@ -1342,10 +1356,12 @@ class ScoringPreparator():
             batch_size=model_opt.valid_batch_size,
             batch_type=model_opt.batch_type)
         texts_ref = []
+        texts_src = []
 
         for i in range(len(preds)):
             preds[i] = self.tgt_detokenizer._detokenize(preds[i][0].split())
             texts_ref.append(self.tgt_detokenizer._detokenize(refs[i]))
+            texts_src.append(self.src_detokenizer._detokenize(sources[i]))
 
         if len(preds) > 0 and self.opt.scoring_debug:
             path = os.path.join(self.opt.dump_preds,
@@ -1356,37 +1372,4 @@ class ScoringPreparator():
                     file.write("SOURCE: {}\n".format(sources[i]))
                     file.write("REF: {}\n".format(texts_ref[i]))
                     file.write("PRED: {}\n\n".format(preds[i]))
-        return preds, texts_ref
-
-
-# def build_scorers(metrics):
-#     scorers = {}
-#     if "BLEU" in metrics:
-#         scorers["BLEU"] = {
-#             "scorer": bleu_scorer,
-#             "value": 0
-#         }
-#     if "BLEU" in metrics:
-#         scorers["TER"] = {
-#             "scorer": ter_scorer,
-#             "value": 0
-#         }
-#     return scorers
-
-
-# def bleu_scorer(preds, texts_ref):
-#     from sacrebleu import corpus_bleu
-#     try:
-#         score = corpus_bleu(preds, [texts_ref]).score
-#     except Exception:
-#         score = 0
-#     return score
-
-
-# def ter_scorer(preds, texts_ref):
-#     from sacrebleu import corpus_ter
-#     try:
-#         score = corpus_ter(preds, [texts_ref]).score
-#     except Exception:
-#         score = 0
-#     return score
+        return preds, texts_ref, texts_src

@@ -11,9 +11,9 @@ class BleuScorer(Scorer):
         """Initialize necessary options for sentencepiece."""
         super().__init__(opts)
 
-    def compute_score(self, preds, texts_refs):
+    def compute_score(self, preds, texts_ref, texts_src):
         try:
-            score = corpus_bleu(preds, [texts_refs]).score
+            score = corpus_bleu(preds, [texts_ref]).score
         except Exception:
             score = 0
         return score

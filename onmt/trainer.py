@@ -165,13 +165,13 @@ class Trainer(object):
 
     def training_eval_handler(self, scorer, batch, mode="train"):
         """Trigger metrics calculations"""
-        preds, texts_ref = self.scoring_preparator.translate(
+        preds, texts_ref, texts_src = self.scoring_preparator.translate(
             model=self.model,
             batch=batch,
             gpu_rank=self.gpu_rank,
             step=self.optim.training_step,
             mode=mode)
-        return scorer.compute_score(preds, texts_ref)
+        return scorer.compute_score(preds, texts_ref, texts_src)
 
     def _accum_count(self, step):
         for i in range(len(self.accum_steps)):
