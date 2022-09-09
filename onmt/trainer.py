@@ -11,6 +11,7 @@
 
 import torch
 import traceback
+import os
 
 import onmt.utils
 from onmt.utils.logging import logger
@@ -241,6 +242,7 @@ class Trainer(object):
         Returns:
             The gathered statistics.
         """
+        os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':16:8'
         if valid_iter is None:
             logger.info('Start training loop without validation...')
         else:

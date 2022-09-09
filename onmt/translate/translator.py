@@ -1369,7 +1369,7 @@ class ScoringPreparator():
                                     mode, step, "txt"))
             with open(path, "a") as file:
                 for i in range(len(preds)):
-                    file.write("SOURCE: {}\n".format(sources[i]))
+                    file.write("SOURCE: {}\n".format(texts_src[i]))
                     file.write("REF: {}\n".format(texts_ref[i]))
                     file.write("PRED: {}\n\n".format(preds[i]))
         return preds, texts_ref, texts_src
