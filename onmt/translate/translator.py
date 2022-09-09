@@ -12,12 +12,14 @@ from onmt.constants import DefaultTokens
 import onmt.model_builder
 import onmt.inputters as inputters
 import onmt.decoders.ensemble
+from onmt.inputters.text_dataset import InferenceDataIterator
 from onmt.translate.beam_search import BeamSearch, BeamSearchLM
 from onmt.translate.greedy_search import GreedySearch, GreedySearchLM
 from onmt.utils.misc import tile, set_random_seed, report_matrix
 from onmt.utils.alignment import extract_alignment, build_align_pharaoh
 from onmt.modules.copy_generator import collapse_copy_scores
 from onmt.constants import ModelTask
+from onmt.utils.parse import ArgumentParser
 
 
 def build_translator(opt, report_score=True, logger=None, out_file=None):
@@ -330,6 +332,45 @@ class Inference(object):
             gs = [0] * batch_size
         return gs
 
+    def translate_dynamic(
+        self,
+        src,
+        transform,
+        src_feats={},
+        tgt=None,
+        batch_size=None,
+        batch_type="sents",
+        attn_debug=False,
+        align_debug=False,
+        phrase_table=""
+    ):
+
+        if batch_size is None:
+            raise ValueError("batch_size must be set")
+
+        if self.tgt_prefix and tgt is None:
+            raise ValueError("Prefix should be feed to tgt if -tgt_prefix.")
+
+        data_iter = InferenceDataIterator(src, tgt, src_feats, transform)
+
+        data = inputters.DynamicDataset(
+            self.fields,
+            data=data_iter,
+            sort_key=inputters.str2sortkey[self.data_type],
+            filter_pred=self._filter_pred,
+        )
+
+        return self._translate(
+            data,
+            tgt=tgt,
+            batch_size=batch_size,
+            batch_type=batch_type,
+            attn_debug=attn_debug,
+            align_debug=align_debug,
+            phrase_table=phrase_table,
+            dynamic=True,
+            transform=transform)
+
     def translate(
         self,
         src,
@@ -386,6 +427,28 @@ class Inference(object):
             sort_key=inputters.str2sortkey[self.data_type],
             filter_pred=self._filter_pred,
         )
+
+        return self._translate(
+            data,
+            tgt=tgt,
+            batch_size=batch_size,
+            batch_type=batch_type,
+            attn_debug=attn_debug,
+            align_debug=align_debug,
+            phrase_table=phrase_table)
+
+    def _translate(
+        self,
+        data,
+        tgt=None,
+        batch_size=None,
+        batch_type="sents",
+        attn_debug=False,
+        align_debug=False,
+        phrase_table="",
+        dynamic=False,
+        transform=None
+    ):
 
         data_iter = inputters.OrderedIterator(
             dataset=data,
@@ -448,6 +511,10 @@ class Inference(object):
                             n_best_preds, n_best_preds_align
                         )
                     ]
+
+                if dynamic:
+                    n_best_preds = [transform.apply_reverse(x)
+                                    for x in n_best_preds]
                 all_predictions += [n_best_preds]
                 self.out_file.write("\n".join(n_best_preds) + "\n")
                 self.out_file.flush()
@@ -1162,3 +1229,147 @@ class GeneratorLM(Inference):
         gold_scores = gold_scores.sum(dim=0).view(-1)
 
         return gold_scores
+
+
+class Detokenizer():
+    """ Allow detokenizing sequences in batchs"""
+    def __init__(self, opt, side):
+        if 'onmt_tokenize' in opt.transforms:
+            self.type = "pyonmttok"
+            if side == "tgt":
+                self.onmttok_kwargs = opt.tgt_onmttok_kwargs
+            elif side == "src":
+                self.onmttok_kwargs = opt.src_onmttok_kwargs
+        else:
+            if side == "tgt":
+                if opt.tgt_subword_model is None:
+                    raise ValueError(
+                        "Missing mandatory tokenizer option \
+                        `tgt_subword_model`")
+                else:
+                    self.model_path = opt.tgt_subword_model
+            elif side == "src":
+                if opt.src_subword_model is None:
+                    raise ValueError(
+                        "Missing mandatory tokenizer option \
+                        `src_subword_model`")
+                else:
+                    self.model_path = opt.src_subword_model
+            if 'sentencepiece' in opt.transforms:
+                self.type = "sentencepiece"
+            elif 'bpe' in opt.transforms:
+                self.type = "subword-nmt"
+
+    def build_detokenizer(self):
+        if self.type == "pyonmttok":
+            import pyonmttok
+            self.detokenizer = pyonmttok.Tokenizer(
+                **self.onmttok_kwargs)
+        elif self.type == "sentencepiece":
+            import sentencepiece as spm
+            self.detokenizer = spm.SentencePieceProcessor()
+            self.detokenizer.Load(self.model_path)
+        elif self.type == "subword-nmt":
+            from subword_nmt.apply_bpe import BPE
+            with open(self.model_path, encoding='utf-8') as codes:
+                self.detokenizer = BPE(codes=codes, vocab=None)
+        return self.detokenizer
+
+    def _detokenize(self, tokens):
+        if self.type == "pyonmttok":
+            detok = self.detokenizer.detokenize(tokens)
+        elif self.type == "sentencepiece":
+            detok = self.detokenizer.DecodePieces(tokens)
+        elif self.type == "subword-nmt":
+            detok = self.detokenizer.segment_tokens(tokens, dropout=0.0)
+        return detok
+
+
+class ScoringPreparator():
+    """Allow the calculation of metrics via the Trainer's
+     training_eval_handler method"""
+    def __init__(self, fields, opt):
+        self.fields = fields
+        self.opt = opt
+        self.tgt_detokenizer = Detokenizer(opt, side="tgt")
+        self.tgt_detokenizer.build_detokenizer()
+        self.src_detokenizer = Detokenizer(opt, side="src")
+        self.src_detokenizer.build_detokenizer()
+
+    def tokenize_batch(self, batch_side, side):
+        """Convert a batch into a list of tokenized sentences"""
+        field = self.fields[side].base_field
+        tokenized_sentences = []
+        for i in range(batch_side.shape[1]):
+            tokens = []
+            for t in range(batch_side.shape[0]):
+                token = field.vocab.itos[batch_side[t, i, 0]]
+                if token == field.pad_token or token == field.eos_token:
+                    break
+                if token != field.init_token:
+                    tokens.append(token)
+            tokenized_sentences.append(tokens)
+        return tokenized_sentences
+
+    def build_sources_and_refs(self, batch, mode):
+        """Reconstruct the sources and references of the examples
+        related to a batch"""
+        if mode == 'valid':
+            sources = []
+            refs = []
+            for example in batch.dataset.examples:
+                sources.append(example.src[0])
+                refs.append(example.tgt[0])
+        elif mode == 'train':
+            sources = self.tokenize_batch(batch.src[0], 'src')
+            refs = self.tokenize_batch(batch.tgt, 'tgt')
+        return sources, refs
+
+    def translate(self, model, batch, gpu_rank, step, mode):
+        """Compute the sentences predicted by the current model's state
+        related to a batch"""
+        model_opt = self.opt
+        parser = ArgumentParser()
+        onmt.opts.translate_opts(parser)
+        base_args = (["-model", "dummy"] + ["-src", "dummy"])
+        opt = parser.parse_args(base_args)
+        opt.gpu = gpu_rank
+        ArgumentParser.validate_translate_opts(opt)
+        ArgumentParser.update_model_opts(model_opt)
+        ArgumentParser.validate_model_opts(model_opt)
+        scorer = onmt.translate.GNMTGlobalScorer.from_opt(opt)
+
+        out_file = codecs.open(os.devnull, "w", "utf-8")
+        translator = Translator.from_opt(
+            model,
+            self.fields,
+            opt,
+            model_opt,
+            global_scorer=scorer,
+            out_file=out_file,
+            report_align=opt.report_align,
+            report_score=True,
+            logger=None)
+        sources, refs = self.build_sources_and_refs(batch, mode)
+        _, preds = translator.translate(
+            sources,
+            batch_size=model_opt.valid_batch_size,
+            batch_type=model_opt.batch_type)
+        texts_ref = []
+        texts_src = []
+
+        for i in range(len(preds)):
+            preds[i] = self.tgt_detokenizer._detokenize(preds[i][0].split())
+            texts_ref.append(self.tgt_detokenizer._detokenize(refs[i]))
+            texts_src.append(self.src_detokenizer._detokenize(sources[i]))
+
+        if len(preds) > 0 and self.opt.scoring_debug:
+            path = os.path.join(self.opt.dump_preds,
+                                "preds.{}_step_{}.{}".format(
+                                    mode, step, "txt"))
+            with open(path, "a") as file:
+                for i in range(len(preds)):
+                    file.write("SOURCE: {}\n".format(texts_src[i]))
+                    file.write("REF: {}\n".format(texts_ref[i]))
+                    file.write("PRED: {}\n\n".format(preds[i]))
+        return preds, texts_ref, texts_src
