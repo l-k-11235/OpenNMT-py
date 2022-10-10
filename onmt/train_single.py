@@ -86,16 +86,46 @@ def main(opt, fields, transforms_cls, checkpoint, device_id,
         assert semaphore is not None, \
             "Using batch_queue requires semaphore as well"
 
+        # def _train_iter():
+        #     while True:
+        #         batch = batch_queue.get()
+        #         semaphore.release()
+        #         # Move batch to specified device
+        #         IterOnDevice.batch_to_device(batch, device_id)
+        #         yield batch
+
         def _train_iter():
-            while True:
-                batch = batch_queue.get()
-                semaphore.release()
-                # Move batch to specified device
-                IterOnDevice.batch_to_device(batch, device_id)
-                yield batch
+            from onmt.utils.distributed import ErrorHandler, Producer_train_iter, \
+                Consumer_train_iter
+            mp = torch.multiprocessing.get_context('spawn')
+            semaphore = mp.Semaphore(1 * opt.queue_size)
+            queue = mp.SimpleQueue()
+            error_queue = mp.SimpleQueue()
+            error_handler = ErrorHandler(error_queue)
+            producers = []
+            consumers = []
+            N = 3
+            for n in range(N):
+                producers.append(mp.Process(target=Producer_train_iter, args=(
+                    queue, batch_queue), daemon=True))
+                consumers.append(mp.Process(target=Consumer_train_iter, args=(
+                    queue, device_id, semaphore, IterOnDevice), daemon=True))
+            for p in producers:
+                p.start()
+                logger.info(
+                    " Starting producer in train_single process pid: {}  ".format(
+                        p.pid))
+                error_handler.add_child(p.pid)
+            for c in consumers:
+                c.start()
+                logger.info(
+                    " Starting consumer in train_single process pid: {}  ".format(
+                        c.pid))
+                error_handler.add_child(c.pid)
+            for p in producers:
+                p.join()
 
         train_iter = _train_iter()
-
     valid_iter = _build_valid_iter(opt, fields, transforms_cls)
     if valid_iter is not None:
         valid_iter = IterOnDevice(valid_iter, device_id)

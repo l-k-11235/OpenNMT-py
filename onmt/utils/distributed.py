@@ -210,3 +210,17 @@ def consumer(process_fn, opt, device_id, error_queue, batch_queue, semaphore):  
         # propagate exception to parent process, keeping original traceback
         import traceback
         error_queue.put((opt.gpu_ranks[device_id], traceback.format_exc()))
+
+
+def Producer_train_iter(queue, batch_queue):
+        for batch in batch_queue:
+            queue.put(batch)
+
+
+def Consumer_train_iter(queue, device_id, semaphore, IterOnDevice):
+    while True:
+        batch = queue.get()
+        semaphore.release()
+        # Move batch to specified device
+        IterOnDevice.batch_to_device(batch, device_id)
+        yield batch
