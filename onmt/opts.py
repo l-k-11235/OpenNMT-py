@@ -35,6 +35,9 @@ def _add_logging_opts(parser, is_train=True):
         group.add('--train_eval_steps', '-train_eval_steps',
                   type=int, default=200,
                   help="Print stats at this interval.")
+        group.add('--n_threads', '-n_threads',
+                  type=int, default=3,
+                  help="Number of threads used in batchs processing")
         group.add('--train_metrics', '-train_metrics',
                   default=[], nargs="+",
                   help='List of names of additional training metrics')
