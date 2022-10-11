@@ -121,34 +121,48 @@ def train(opt):
         error_queue = mp.SimpleQueue()
         error_handler = ErrorHandler(error_queue)
         # Train with multiprocessing.
-        procs = []
+        # Only one consumer per GPU
+        consumers = []
+        print("{} GPUS".format(nb_gpu))
+        print("{} consumers".format(nb_gpu))
         for device_id in range(nb_gpu):
             q = mp.Queue(opt.queue_size)
             queues += [q]
-            procs.append(mp.Process(target=consumer, args=(
+            consumers.append(mp.Process(target=consumer, args=(
                 train_process, opt, device_id, error_queue, q, semaphore),
                 daemon=True))
-            procs[device_id].start()
-            logger.info(" Starting process pid: %d  " % procs[device_id].pid)
-            error_handler.add_child(procs[device_id].pid)
+            consumers[device_id].start()
+            logger.info(
+                " Starting process pid: %d  " % consumers[device_id].pid)
+            error_handler.add_child(consumers[device_id].pid)
+        # Data-processing can be multi-threaded on each GPU.
+        # We create n_threads producers per GPU.
         producers = []
-        # This does not work if we merge with the first loop, not sure why
+        print("{} producers".format(nb_gpu*opt.n_threads))
+        offset = 0
         for device_id in range(nb_gpu):
-            # Get the iterator to generate from
-            train_iter = _build_train_iter(
-                opt, fields, transforms_cls, stride=nb_gpu, offset=device_id)
-            producer = mp.Process(target=batch_producer,
-                                  args=(train_iter, queues[device_id],
-                                        semaphore, opt, device_id),
-                                  daemon=True)
-            producers.append(producer)
-            producers[device_id].start()
-            logger.info(" Starting producer process pid: {}  ".format(
-                producers[device_id].pid))
-            error_handler.add_child(producers[device_id].pid)
+            for n in range(opt.n_threads):
+                # Get the iterator to generate from.
+                # We need one data iterator per producer.
+                print("on GPU: ", device_id)
+                print("thread:", n)
+                print("offset: ", offset)
+                train_iter = _build_train_iter(
+                    opt, fields, transforms_cls,
+                    stride=nb_gpu*opt.n_threads, offset=offset)
+                offset += 1
+                producer = mp.Process(target=batch_producer,
+                                      args=(train_iter, queues[device_id],
+                                            semaphore, opt, device_id),
+                                      daemon=True)
+                producers.append(producer)
+                producer.start()
+                logger.info(" Starting producer process pid: {}  ".format(
+                    producer.pid))
+                error_handler.add_child(producer.pid)
 
-        for p in procs:
-            p.join()
+        for c in consumers:
+            c.join()
         # Once training is done, we can terminate the producers
         for p in producers:
             p.terminate()
