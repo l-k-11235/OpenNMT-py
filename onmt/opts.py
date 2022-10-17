@@ -97,6 +97,10 @@ def _add_dynamic_corpus_opts(parser, build_vocab_only=False):
               choices=AVAILABLE_TRANSFORMS.keys(),
               help="Default transform pipeline to apply to data. "
                    "Can be specified in each corpus of data to override.")
+    group.add("-tm_transforms", "--tm_transforms", default=[], nargs="+",
+              choices=AVAILABLE_TRANSFORMS.keys(),
+              help="For lm training, in the purpose of lm prior."
+                   "To avoid mismatch between LM et TM vocab sizes")
 
     group.add("-save_data", "--save_data", required=build_vocab_only,
               help="Output base path for objects that will "
