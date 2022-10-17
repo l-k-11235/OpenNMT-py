@@ -12,9 +12,10 @@
 
 import torch
 import traceback
-
 import onmt.utils
 from onmt.utils.logging import logger
+from onmt.model_builder import load_test_model
+from onmt.utils.lm_prior_loss import lm_prior_loss
 from onmt.translate.utils import ScoringPreparator
 from onmt.scorers import get_scorers_cls, build_scorers
 
@@ -68,6 +69,24 @@ def build_trainer(opt, device_id, model, fields, optim, model_saver=None):
         if opt.early_stopping > 0 else None
 
     report_manager = onmt.utils.build_report_manager(opt, gpu_rank)
+
+    if opt.lm_prior_model:
+        opt.gpu = 0
+        opt.fp32 = False
+        opt.int8 = False
+        _, lm_prior_model, lm_model_opt \
+            = load_test_model(opt, model_path=opt.lm_prior_model)
+        lm_prior_model.to(torch.device("cuda", gpu_rank))
+        lm_prior_model.eval()
+        vocab = tgt_field.vocab
+        lm_prior_lambda = opt.lm_prior_lambda
+        lm_prior_tau = opt.lm_prior_tau
+    else:
+        lm_prior_model = None
+        lm_prior_lambda = 0
+        lm_prior_tau = 1
+        vocab = tgt_field.vocab
+
     trainer = onmt.Trainer(model,
                            train_loss, valid_loss,
                            scoring_preparator, train_scorers, valid_scorers,
@@ -84,7 +103,11 @@ def build_trainer(opt, device_id, model, fields, optim, model_saver=None):
                            earlystopper=earlystopper,
                            dropout=dropout,
                            attention_dropout=attention_dropout,
-                           dropout_steps=dropout_steps)
+                           dropout_steps=dropout_steps,
+                           lm_prior_model=lm_prior_model,
+                           vocab=vocab,
+                           lm_prior_lambda=lm_prior_lambda,
+                           lm_prior_tau=lm_prior_tau)
     return trainer
 
 
@@ -124,7 +147,10 @@ class Trainer(object):
                  report_manager=None, with_align=False, model_saver=None,
                  average_decay=0, average_every=1, model_dtype='fp32',
                  earlystopper=None, dropout=[0.3], attention_dropout=[0.1],
-                 dropout_steps=[0]):
+                 dropout_steps=[0],
+                 lm_prior_model=None, vocab=None,
+                 lm_prior_lambda=None, lm_prior_tau=None):
+
         # Basic attributes.
 
         self.model = model
@@ -156,6 +182,10 @@ class Trainer(object):
         self.dropout = dropout
         self.attention_dropout = attention_dropout
         self.dropout_steps = dropout_steps
+        self.lm_prior_model = lm_prior_model
+        self.vocab = vocab
+        self.lm_prior_lambda = lm_prior_lambda
+        self.lm_prior_tau = lm_prior_tau
 
         for i in range(len(self.accum_count_l)):
             assert self.accum_count_l[i] > 0
@@ -461,8 +491,17 @@ class Trainer(object):
                                 metric] = self.train_scorers[metric]["value"]
                         batch_stats.computed_metrics = computed_metrics
 
+                    if self.lm_prior_model is not None:
+                        lm_loss = lm_prior_loss(self.model,
+                                                self.lm_prior_model,
+                                                outputs, tgt,
+                                                self.lm_prior_tau)
+                    else:
+                        lm_loss = 0
+
                     if loss is not None:
-                        self.optim.backward(loss)
+                        total_loss = loss + self.lm_prior_lambda * lm_loss
+                        self.optim.backward(total_loss)
 
                     total_stats.update(batch_stats)
                     report_stats.update(batch_stats)

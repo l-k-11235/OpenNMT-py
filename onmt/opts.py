@@ -97,6 +97,10 @@ def _add_dynamic_corpus_opts(parser, build_vocab_only=False):
               choices=AVAILABLE_TRANSFORMS.keys(),
               help="Default transform pipeline to apply to data. "
                    "Can be specified in each corpus of data to override.")
+    group.add("-tm_transforms", "--tm_transforms", default=[], nargs="+",
+              choices=AVAILABLE_TRANSFORMS.keys(),
+              help="For lm training, in the purpose of lm prior."
+                   "To avoid mismatch between LM et TM vocab sizes")
 
     group.add("-save_data", "--save_data", required=build_vocab_only,
               help="Output base path for objects that will "
@@ -437,6 +441,12 @@ def model_opts(parser):
               help='Train a coverage attention layer.')
     group.add('--lambda_coverage', '-lambda_coverage', type=float, default=0.0,
               help='Lambda value for coverage loss of See et al (2017)')
+    group.add('--lm_prior_model', '-lm_prior_model', type=str, default=None,
+              help='LM model to used to train the TM')
+    group.add('--lm_prior_lambda', '-lambda_prior_lambda',
+              type=float, default=0.0, help='LM Prior Lambda')
+    group.add('--lm_prior_tau', '-lambda_prior_tau', type=float, default=1.0,
+              help='LM Prior Tau')
     group.add('--loss_scale', '-loss_scale', type=float, default=0,
               help="For FP16 training, the static loss scale to use. If not "
                    "set, the loss scale is dynamically computed.")

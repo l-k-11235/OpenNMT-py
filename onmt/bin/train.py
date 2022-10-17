@@ -29,6 +29,13 @@ def prepare_fields_transforms(opt):
     """Prepare or dump fields & transforms before training."""
     transforms_cls = get_transforms_cls(opt._all_transform)
     specials = get_specials(opt, transforms_cls)
+    if len(opt.tm_transforms) > 0:
+        # avoid mismatch between LM et TM vocab sizes
+        # For LM training only
+        tm_transforms_cls = get_transforms_cls(set(opt.tm_transforms))
+        tm_specials = get_specials(opt, tm_transforms_cls)
+        for side in ("src", "tgt"):
+            specials[side] = specials[side].union(tm_specials[side])
 
     fields = build_dynamic_fields(
         opt, src_specials=specials['src'], tgt_specials=specials['tgt'])
