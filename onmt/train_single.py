@@ -113,6 +113,8 @@ def _build_valid_iter(opt, transforms_cls, vocabs):
 
 def _build_train_iter(opt, transforms_cls, vocabs, stride=1, offset=0):
     """Build training iterator."""
+    logger.info("train_iter stride: {}".format(stride))
+    logger.info("train_iter offset: {}".format(offset))
     train_iter = build_dynamic_dataset_iter(
         opt, transforms_cls, vocabs, task=CorpusTask.TRAIN,
         copy=opt.copy_attn, stride=stride, offset=offset)
@@ -141,11 +143,19 @@ def main(opt, device_id):
 
     # Build model saver
     model_saver = build_model_saver(model_opt, opt, model, vocabs, optim)
-
     trainer = build_trainer(
         opt, device_id, model, vocabs, optim, model_saver=model_saver)
-
-    _train_iter = _build_train_iter(opt, transforms_cls, vocabs)
+    nb_gpu = len(opt.gpu_ranks)
+    if opt.world_size > 1:
+        stride = nb_gpu
+        offset = device_id
+        logger.info("On device: {}".format(device_id))
+        logger.info("{} threads".format(opt.num_workers))
+    else:
+        stride = 1
+        offset = 0
+    _train_iter = _build_train_iter(opt, transforms_cls, vocabs,
+                                    stride=stride, offset=offset)
     train_iter = IterOnDevice(_train_iter, device_id)
 
     valid_iter = _build_valid_iter(opt, transforms_cls, vocabs)
