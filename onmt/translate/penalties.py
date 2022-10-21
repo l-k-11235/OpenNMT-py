@@ -22,6 +22,9 @@ class PenaltyBuilder(object):
     """
 
     def __init__(self, cov_pen, length_pen):
+        print("##########")
+        print(type(cov_pen))
+        print(cov_pen)
         self.has_cov_pen = not self._pen_is_none(cov_pen)
         self.coverage_penalty = self._coverage_penalty(cov_pen)
         self.has_len_pen = not self._pen_is_none(length_pen)

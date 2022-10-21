@@ -3,6 +3,7 @@ import os
 from onmt.utils.parse import ArgumentParser
 from onmt.translate import GNMTGlobalScorer, Translator
 from onmt.opts import translate_opts
+from onmt.constants import DefaultTokens
 
 
 class Detokenizer():
@@ -56,23 +57,31 @@ class Detokenizer():
 class ScoringPreparator():
     """Allow the calculation of metrics via the Trainer's
      training_eval_handler method"""
-    def __init__(self, fields, opt):
-        self.fields = fields
+    def __init__(self, vocabs, opt):
         self.opt = opt
+        self.opt.vocabs = vocabs
+        with open("/nas-labs/MT/pytorchwork/Recipes/toy-lina/benchmark-OpenNMT-v3.0/opt", "w") as w:
+            w.write(str(opt))
         self.tgt_detokenizer = Detokenizer(opt)
         self.tgt_detokenizer.build_detokenizer()
 
     def tokenize_batch(self, batch_side, side):
         """Convert a batch into a list of tokenized sentences"""
-        field = self.fields[side].base_field
+        vocab = self.opt.vocabs[side]
         tokenized_sentences = []
+        with open("/nas-labs/MT/pytorchwork/Recipes/toy-lina/benchmark-OpenNMT-v3.0/x", "w") as w:
+            w.write(str(batch_side.size()))
+            w.write("\n")
+            w.write(str(batch_side))
         for i in range(batch_side.shape[1]):
             tokens = []
-            for t in range(batch_side.shape[0]):
-                token = field.vocab.itos[batch_side[t, i, 0]]
-                if token == field.pad_token or token == field.eos_token:
+            for j in range(batch_side.shape[0]):
+                _id = batch_side[j, i].item()
+                token = vocab.ids_to_tokens[_id]
+                if (token == DefaultTokens.PAD
+                        or token == DefaultTokens.EOS):
                     break
-                if token != field.init_token:
+                if token != DefaultTokens.BOS:
                     tokens.append(token)
             tokenized_sentences.append(tokens)
         return tokenized_sentences
@@ -87,41 +96,55 @@ class ScoringPreparator():
                 sources.append(example.src[0])
                 refs.append(example.tgt[0])
         elif mode == 'train':
-            sources = self.tokenize_batch(batch.src[0], 'src')
-            refs = self.tokenize_batch(batch.tgt, 'tgt')
+            sources = self.tokenize_batch(batch["src"], 'src')
+            refs = self.tokenize_batch(batch["tgt"], 'tgt')
+            # sources = self.tokenize_batch(batch.src[0], 'src')
+            # refs = self.tokenize_batch(batch.tgt, 'tgt')
         return sources, refs
 
     def translate(self, model, batch, gpu_rank, step, mode):
         """Compute the sentences predicted by the current model's state
         related to a batch"""
-        model_opt = self.opt
+        from onmt.bin.translate import translate
+        from onmt.opts import translate_opts
+        ##############
+        # model opts #
+        ##############
+        # model_opt = self.opt
+        # ArgumentParser.update_model_opts(model_opt)
+        # ArgumentParser.validate_model_opts(model_opt)
+        ##################
+        # translate opts #
+        ##################
+        # parser = ArgumentParser()
+        # translate_opts(parser)
+        # translate_opt = parser.parse_args(base_args)
+        #translate_opt.gpu = gpu_rank
+        # translate_opt.transforms = model_opt._all_transform
+        # translate_opt.vocabs = model_opt.vocabs
+        # translate_opt.model_task = model_opt.model_task
+        print("###################################")
+        sources, refs = self.build_sources_and_refs(batch, mode)
+        base_args = (["-model", model] + ["-src", sources] + ["tgt", refs])
         parser = ArgumentParser()
         translate_opts(parser)
-        base_args = (["-model", "dummy"] + ["-src", "dummy"])
-        opt = parser.parse_args(base_args)
-        opt.gpu = gpu_rank
-        ArgumentParser.validate_translate_opts(opt)
-        ArgumentParser.update_model_opts(model_opt)
-        ArgumentParser.validate_model_opts(model_opt)
-        scorer = GNMTGlobalScorer.from_opt(opt)
-        out_file = codecs.open(os.devnull, "w", "utf-8")
-        translator = Translator.from_opt(
-            model,
-            self.fields,
-            opt,
-            model_opt,
-            global_scorer=scorer,
-            out_file=out_file,
-            report_align=opt.report_align,
-            report_score=True,
-            logger=None)
-        sources, refs = self.build_sources_and_refs(batch, mode)
-        _, preds = translator.translate(
-            sources,
-            batch_size=model_opt.valid_batch_size,
-            batch_type=model_opt.batch_type)
-        texts_ref = []
+        translate_opt = parser.parse_args(base_args)
+        translate_opt.gpu = gpu_rank
+        # base_args = (["-model", "dummy"] + ["-src", "dummy"])
+        # translate_opt = parser.parse_args(self.opt)
+        with open("/nas-labs/MT/pytorchwork/Recipes/toy-lina/benchmark-OpenNMT-v3.0/translate_opt2", "w") as w:
+            w.write(str(translate_opt))
 
+        translate(self.opt, is_train=True, translate_opt=translate_opt)
+        print(translate(translate_opt, is_train=True, translate_opt=translate_opt))
+        _, preds = translate(translate_opt, is_train=True, translate_opt=translate_opt)
+        # print("######### sources", sources)
+        # print("######### refs", refs)
+        # _, preds = translator._translate(
+        #     sources,
+        #     batch_size=model_opt.valid_batch_size,
+        #     batch_type=model_opt.batch_type)
+        texts_ref = []
         for i in range(len(preds)):
             preds[i] = self.tgt_detokenizer._detokenize(preds[i][0].split())
             texts_ref.append(self.tgt_detokenizer._detokenize(refs[i]))
