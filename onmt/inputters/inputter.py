@@ -130,8 +130,12 @@ def _read_vocab_file(vocab_path, min_count):
             if has_count:
                 vocab = []
                 for line in lines:
-                    if int(line.split(None, 1)[1]) >= min_count:
-                        vocab.append(line.split(None, 1)[0])
+                    try :
+                        if int(line.split(None, 1)[1]) >= min_count:
+                            vocab.append(line.split(None, 1)[0])
+                    except Exception as e:
+                        print("Impossible to add to voc: ")
+                        print(line, line.split(None, 1))       
             else:
                 vocab = [line.strip().split()[0] for line in lines]
             return vocab

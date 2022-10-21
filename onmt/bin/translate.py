@@ -11,24 +11,29 @@ from onmt.utils.parse import ArgumentParser
 from onmt.utils.misc import use_gpu, set_random_seed
 
 
-def translate(opt):
-    ArgumentParser.validate_translate_opts(opt)
-    ArgumentParser._get_all_transform_translate(opt)
-    ArgumentParser._validate_transforms_opts(opt)
-    ArgumentParser.validate_translate_opts_dynamic(opt)
-    logger = init_logger(opt.log_file)
+def translate(opt, is_train=False):   
+    if not is_train:
+        ArgumentParser.validate_translate_opts(opt)
+        ArgumentParser._get_all_transform_translate(opt)
+        ArgumentParser._validate_transforms_opts(opt)
+        ArgumentParser.validate_translate_opts_dynamic(opt)
 
+    logger = init_logger(opt.log_file)
     set_random_seed(opt.seed, use_gpu(opt))
 
     translator = build_translator(opt, logger=logger,
-                                  report_score=True)
+                                  report_score=True, is_train=is_train)
+                    
 
     transforms_cls = get_transforms_cls(opt._all_transform)
 
+    if not is_train:
+        data_opt = opt
+    else:
+        data_opt = translate_opt
     infer_iter = build_dynamic_dataset_iter(
-        opt, transforms_cls, translator.vocabs, task=CorpusTask.INFER,
+        data_opt, transforms_cls, translator.vocabs, task=CorpusTask.INFER,
         copy=translator.copy_attn)
-
     data_transform = [
         infer_iter.transforms[name] for name in
         opt.transforms if name in infer_iter.transforms

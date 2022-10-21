@@ -308,10 +308,16 @@ class ONMTTokenizerTransform(TokenizerTransform):
 
     @classmethod
     def _validate_options(cls, opts):
-        """Extra checks for OpenNMT Tokenizer options."""
+        """Extra checks for OpenNMT Tokenizer opions."""
         super()._validate_options(opts)
-        src_kwargs_dict = eval(opts.src_onmttok_kwargs)
-        tgt_kwargs_dict = eval(opts.tgt_onmttok_kwargs)
+        if isinstance(opts.src_onmttok_kwargs, dict):
+            src_kwargs_dict = opts.src_onmttok_kwargs
+        else:
+            src_kwargs_dict = eval(opts.src_onmttok_kwargs)
+        if isinstance(opts.tgt_onmttok_kwargs, dict):
+            tgt_kwargs_dict = opts.tgt_onmttok_kwargs
+        else:
+            tgt_kwargs_dict = eval(opts.tgt_onmttok_kwargs)  
         if not isinstance(src_kwargs_dict, dict):
             raise ValueError("-src_onmttok_kwargs isn't a dict valid string.")
         if not isinstance(tgt_kwargs_dict, dict):

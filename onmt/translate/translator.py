@@ -19,17 +19,19 @@ from onmt.modules.copy_generator import collapse_copy_scores
 from onmt.constants import ModelTask
 
 
-def build_translator(opt, report_score=True, logger=None, out_file=None):
+def build_translator(opt, report_score=True, logger=None, out_file=None, is_train = False, translate_opt=None):
     if out_file is None:
         out_file = codecs.open(opt.output, "w+", "utf-8")
 
-    load_test_model = (
-        onmt.decoders.ensemble.load_test_model
-        if len(opt.models) > 1
-        else onmt.model_builder.load_test_model
-    )
-    vocabs, model, model_opt = load_test_model(opt)
-
+    if is_train:
+        vocabs, model, model_opt, opt = opt.vocabs, opt.model, opt, translate_opt
+    else: 
+        load_test_model = (
+            onmt.decoders.ensemble.load_test_model
+            if len(opt.models) > 1
+            else onmt.model_builder.load_test_model
+        )
+        vocabs, model, model_opt = load_test_model(opt)
     scorer = onmt.translate.GNMTGlobalScorer.from_opt(opt)
 
     if model_opt.model_task == ModelTask.LANGUAGE_MODEL:
