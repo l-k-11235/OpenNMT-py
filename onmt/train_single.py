@@ -113,8 +113,10 @@ def _build_valid_iter(opt, transforms_cls, vocabs):
 
 def _build_train_iter(opt, transforms_cls, vocabs, stride=1, offset=0):
     """Build training iterator."""
-    logger.info("train_iter stride: {}".format(stride))
-    logger.info("train_iter offset: {}".format(offset))
+    # logger.info("train_iter stride: {}".format(stride))
+    # logger.info("train_iter offset: {}".format(offset))
+    print("train_iter stride: {}".format(stride))
+    print("train_iter offset: {}".format(offset))
     train_iter = build_dynamic_dataset_iter(
         opt, transforms_cls, vocabs, task=CorpusTask.TRAIN,
         copy=opt.copy_attn, stride=stride, offset=offset)
@@ -149,8 +151,10 @@ def main(opt, device_id):
     if opt.world_size > 1:
         stride = nb_gpu
         offset = device_id
-        logger.info("On device: {}".format(device_id))
-        logger.info("{} threads".format(opt.num_workers))
+        print("On device: {}".format(device_id))
+        print("{} threads".format(opt.num_workers))
+        # logger.info("On device: {}".format(device_id))
+        # logger.info("{} threads".format(opt.num_workers))
     else:
         stride = 1
         offset = 0
