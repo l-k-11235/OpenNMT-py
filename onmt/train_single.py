@@ -8,7 +8,8 @@ from onmt.constants import CorpusTask
 from onmt.transforms import make_transforms, save_transforms, \
     get_specials, get_transforms_cls
 from onmt.inputters import build_vocab, IterOnDevice
-from onmt.inputters.dynamic_iterator import build_dynamic_dataset_iter
+from onmt.inputters.dynamic_iterator import build_dynamic_dataset_iter, \
+    build_dynamic_batch_iter
 from onmt.inputters.text_corpus import save_transformed_sample
 from onmt.model_builder import build_model
 from onmt.models.model_saver import load_checkpoint
@@ -116,7 +117,9 @@ def _build_train_iter(opt, transforms_cls, vocabs, stride=1, offset=0):
     train_iter = build_dynamic_dataset_iter(
         opt, transforms_cls, vocabs, task=CorpusTask.TRAIN,
         copy=opt.copy_attn, stride=stride, offset=offset)
-    return train_iter
+    batch_iter = build_dynamic_batch_iter(train_iter, vocabs, opt,
+                                          task=CorpusTask.TRAIN)
+    return batch_iter
 
 
 def main(opt, device_id):

@@ -86,7 +86,7 @@ class WeightedMixer(MixingStrategy):
 
 
 class DynamicDatasetIter(torch.utils.data.IterableDataset):
-    """Yield batch from (multiple) plain text corpus.
+    """Yield processed examples from (multiple) plain text corpus.
 
     Args:
         corpora (dict[str, ParallelCorpus]): collections of corpora to iterate;
@@ -94,11 +94,7 @@ class DynamicDatasetIter(torch.utils.data.IterableDataset):
         transforms (dict[str, Transform]): transforms may be used by corpora;
         vocabs (dict[str, Vocab]): vocab dict for convert corpora into Tensor;
         task (str): CorpusTask.TRAIN/VALID/INFER;
-        batch_type (str): batching type to count on, choices=[tokens, sents];
-        batch_size (int): numbers of examples in a batch;
-        batch_size_multiple (int): make batch size multiply of this;
         data_type (str): input data type, currently only text;
-        bucket_size (int): accum this number of examples in a dynamic dataset;
         copy (Bool): if True, will add specific items for copy_attn
         skip_empty_level (str): security level when encouter empty line;
         stride (int): iterate data files with this stride;
@@ -111,9 +107,8 @@ class DynamicDatasetIter(torch.utils.data.IterableDataset):
     """
 
     def __init__(self, corpora, corpora_info, transforms, vocabs, task,
-                 batch_type, batch_size, batch_size_multiple, data_type="text",
-                 bucket_size=2048, copy=False,
-                 skip_empty_level='warning', stride=1, offset=0):
+                 data_type="text", copy=False, skip_empty_level='warning',
+                 stride=1, offset=0):
         super(DynamicDatasetIter).__init__()
         self.corpora = corpora
         self.transforms = transforms
@@ -121,12 +116,7 @@ class DynamicDatasetIter(torch.utils.data.IterableDataset):
         self.corpora_info = corpora_info
         self.task = task
         self.init_iterators = False
-        self.batch_size = batch_size
-        self.batch_size_fn = max_tok_len if batch_type == "tokens" else None
-        self.batch_size_multiple = batch_size_multiple
         self.device = 'cpu'
-        self.sort_key = text_sort_key
-        self.bucket_size = bucket_size
         self.copy = copy
         if stride <= 0:
             raise ValueError(f"Invalid argument for stride={stride}.")
@@ -143,32 +133,17 @@ class DynamicDatasetIter(torch.utils.data.IterableDataset):
                  stride=1, offset=0):
         """Initilize `DynamicDatasetIter` with options parsed from `opt`."""
         corpora_info = {}
-        batch_size = opt.valid_batch_size if (task == CorpusTask.VALID) \
-            else opt.batch_size
         if task != CorpusTask.INFER:
-            if opt.batch_size_multiple is not None:
-                batch_size_multiple = opt.batch_size_multiple
-            else:
-                batch_size_multiple = 8 if opt.model_dtype == "fp16" else 1
             corpora_info = opt.data
-            bucket_size = opt.bucket_size
             skip_empty_level = opt.skip_empty_level
         else:
-            batch_size_multiple = 1
             corpora_info[CorpusTask.INFER] = {'transforms': opt.transforms}
             corpora_info[CorpusTask.INFER]['weight'] = 1
-            # bucket_size = batch_size
-            bucket_size = 16384
             skip_empty_level = 'warning'
-        if task == CorpusTask.INFER and \
-           vocabs['data_task'] == ModelTask.LANGUAGE_MODEL:
-            # We only support
-            batch_size_multiple = 1
-            batch_size = 1
         return cls(
-            corpora, corpora_info, transforms, vocabs, task, opt.batch_type,
-            batch_size, batch_size_multiple, data_type=opt.data_type,
-            bucket_size=bucket_size, copy=copy,
+            corpora, corpora_info, transforms, vocabs, task,
+            data_type=opt.data_type,
+            copy=copy,
             skip_empty_level=skip_empty_level,
             stride=stride, offset=offset
         )
@@ -194,30 +169,99 @@ class DynamicDatasetIter(torch.utils.data.IterableDataset):
             self.mixer = SequentialMixer(datasets_iterables, datasets_weights)
         self.init_iterators = True
 
-    def _tuple_to_json_with_tokIDs(self, tuple_bucket):
-        bucket = []
-        for item in tuple_bucket:
-            example = process(self.task, item)
-            if example is not None:
+    def __iter__(self):
+        processed_ex = None
+        for ex in self.mixer:
+            # print("#############")
+            # print(ex)
+            processed_ex = process(self.task, ex)
+            # print(processed_ex)
+            if processed_ex is not None:
                 if self.copy:
-                    example = _addcopykeys(self.vocabs, example)
-                bucket.append(numericalize(self.vocabs, example))
-        return bucket
+                    processed_ex = _addcopykeys(self.vocabs, processed_ex)
+                processed_ex = numericalize(self.vocabs, processed_ex)
+            # print(processed_ex)
+            if processed_ex is not None:
+                yield processed_ex
+                processed_ex = None
+
+
+def build_dynamic_dataset_iter(opt, transforms_cls, vocabs, copy=False,
+                               task=CorpusTask.TRAIN, stride=1, offset=0):
+    """
+    Build `DynamicDatasetIter` from opt.
+    Typically this function is called for CorpusTask.[TRAIN,VALID,INFER]
+    from the main tain / translate scripts
+    """
+    transforms = make_transforms(opt, transforms_cls, vocabs)
+    corpora = get_corpora(opt, task)
+    if corpora is None:
+        assert task != CorpusTask.TRAIN, "only valid corpus is ignorable."
+        return None
+    data_iter = DynamicDatasetIter.from_opt(
+        corpora, transforms, vocabs, opt, task, copy=copy,
+        stride=stride, offset=offset)
+    data_iter.num_workers = opt.num_workers if \
+        hasattr(opt, 'num_workers') else 0
+    if data_iter.num_workers == 0 or task == CorpusTask.INFER:
+        data_iter._init_datasets(0)  # when workers=0 init_fn not called
+        data_loader = data_iter
+    else:
+        data_loader = DataLoader(data_iter, batch_size=None,
+                                 pin_memory=True,
+                                 multiprocessing_context="fork",
+                                 num_workers=data_iter.num_workers,
+                                 worker_init_fn=data_iter._init_datasets)
+    return data_loader
+
+
+class DynamicBatchtIter(torch.utils.data.DataLoader):
+    def __init__(self, dataset_iter,
+                 vocabs, task, batch_type,
+                 batch_size, batch_size_multiple, bucket_size=2048):
+        self.dataset_iter = dataset_iter
+        self.batch_size_multiple = batch_size_multiple
+        self.bucket_size = bucket_size
+        self.batch_size = batch_size
+        self.batch_size_fn = max_tok_len if batch_type == "tokens" else None
+        self.task = task
+        self.sort_key = text_sort_key
+        self.vocabs = vocabs
+
+    @classmethod
+    def from_opt(cls, dataset_iter, vocabs, opt, task):
+        """Initilize `DynamicDatasetIter` with options parsed from `opt`."""
+        batch_size = opt.valid_batch_size if (task == CorpusTask.VALID) \
+            else opt.batch_size
+        if task != CorpusTask.INFER:
+            if opt.batch_size_multiple is not None:
+                batch_size_multiple = opt.batch_size_multiple
+            else:
+                batch_size_multiple = 8 if opt.model_dtype == "fp16" else 1
+            bucket_size = opt.bucket_size
+        else:
+            batch_size_multiple = 1
+            bucket_size = 16384
+        if task == CorpusTask.INFER and \
+           vocabs['data_task'] == ModelTask.LANGUAGE_MODEL:
+            # We only support
+            batch_size_multiple = 1
+            batch_size = 1
+        return cls(
+            dataset_iter, vocabs, task, opt.batch_type,
+            batch_size, batch_size_multiple, bucket_size=bucket_size)
 
     def _bucketing(self):
-        """
-        Add up to bucket_size examples from the mixed corpora according
-        to the above strategy. example tuple is converted to json and
-        tokens numericalized.
-        """
         bucket = []
-        for ex in self.mixer:
-            bucket.append(ex)
-            if len(bucket) == self.bucket_size:
-                yield self._tuple_to_json_with_tokIDs(bucket)
-                bucket = []
+        for processed_ex in self.dataset_iter:
+            print("##")
+            bucket.append(processed_ex)
+        if len(bucket) == self.bucket_size:
+            yield bucket
+            print("####### bucket full")
+            bucket = []
         if bucket:
-            yield self._tuple_to_json_with_tokIDs(bucket)
+            yield bucket
 
     def batch_iter(self, data, batch_size, batch_size_fn=None,
                    batch_size_multiple=1):
@@ -263,6 +307,7 @@ class DynamicDatasetIter(torch.utils.data.IterableDataset):
 
     def __iter__(self):
         for bucket in self._bucketing():
+            print("################")
             # For TRAIN we need to group examples by length
             # for faster performance, but otherwise, sequential.
             if self.task == CorpusTask.TRAIN:
@@ -284,30 +329,6 @@ class DynamicDatasetIter(torch.utils.data.IterableDataset):
                 yield tensor_batch
 
 
-def build_dynamic_dataset_iter(opt, transforms_cls, vocabs, copy=False,
-                               task=CorpusTask.TRAIN, stride=1, offset=0):
-    """
-    Build `DynamicDatasetIter` from opt.
-    Typically this function is called for CorpusTask.[TRAIN,VALID,INFER]
-    from the main tain / translate scripts
-    """
-    transforms = make_transforms(opt, transforms_cls, vocabs)
-    corpora = get_corpora(opt, task)
-    if corpora is None:
-        assert task != CorpusTask.TRAIN, "only valid corpus is ignorable."
-        return None
-    data_iter = DynamicDatasetIter.from_opt(
-        corpora, transforms, vocabs, opt, task, copy=copy,
-        stride=stride, offset=offset)
-    data_iter.num_workers = opt.num_workers if \
-        hasattr(opt, 'num_workers') else 0
-    if data_iter.num_workers == 0 or task == CorpusTask.INFER:
-        data_iter._init_datasets(0)  # when workers=0 init_fn not called
-        data_loader = data_iter
-    else:
-        data_loader = DataLoader(data_iter, batch_size=None,
-                                 pin_memory=True,
-                                 multiprocessing_context="fork",
-                                 num_workers=data_iter.num_workers,
-                                 worker_init_fn=data_iter._init_datasets)
-    return data_loader
+def build_dynamic_batch_iter(dataset_iter, vocabs, opt, task=CorpusTask.TRAIN):
+    batch_iter = DynamicBatchtIter.from_opt(dataset_iter, vocabs, opt, task)
+    return batch_iter
