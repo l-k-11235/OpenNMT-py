@@ -10,6 +10,7 @@ from onmt.utils.logging import logger
 from onmt.utils.misc import RandomShuffler
 from torch.utils.data import DataLoader
 import time
+import itertools
 
 
 class MixingStrategy(object):
@@ -102,7 +103,6 @@ class DynamicDatasetIter(torch.utils.data.IterableDataset):
         offset (int): iterate data files with this offset.
 
     Attributes:
-        batch_size_fn (function): functions to calculate batch_size;
         sort_key (function): functions define how to sort examples;
         mixer (MixingStrategy): the strategy to iterate corpora.
     """
@@ -169,15 +169,28 @@ class DynamicDatasetIter(torch.utils.data.IterableDataset):
         self.init_iterators = True
 
     def __iter__(self):
-        processed_ex = None
+        # processed_ex = None
+        # for ex in self.mixer:
+        #     # print("#############")
+        #     # print(ex)
+        #     processed_ex = process(self.task, ex)
+        #     # print(processed_ex)
+        #     if processed_ex is not None:
+        #         yield processed_ex
+        #         processed_ex = None
+        list_ex = []
+        n = 100
+        start = time.time()
         for ex in self.mixer:
-            # print("#############")
-            # print(ex)
             processed_ex = process(self.task, ex)
-            # print(processed_ex)
             if processed_ex is not None:
-                yield processed_ex
-                processed_ex = None
+                list_ex.append(processed_ex)
+            if len(list_ex) == n:
+                print('######## time to process {} example: {}'.format(n, time.time() - start))
+                yield list_ex
+                list_ex = []
+        if list_ex:
+            yield list_ex
 
 
 def build_dynamic_dataset_iter(opt, transforms_cls, vocabs,
@@ -259,11 +272,25 @@ class DynamicBatchtIter(torch.utils.data.DataLoader):
         return bucket
 
     def _bucketing(self):
+        # print("####### bucketing {} examples".format(self.bucket_size))
+        # start = time.time()
+        # bucket = []
+        # for processed_ex in self.dataset_iter:
+        #     bucket.append(processed_ex)
+        #     if len(bucket) == self.bucket_size:
+        #         print("####### time to fill the bucket {}".format(
+        #             time.time() - start))
+        #         yield self._tuple_to_json_with_tokIDs(bucket)
+        #         bucket = []
+        # if bucket:
+        #     yield self._tuple_to_json_with_tokIDs(bucket)
         print("####### bucketing {} examples".format(self.bucket_size))
         start = time.time()
         bucket = []
-        for processed_ex in self.dataset_iter:
-            bucket.append(processed_ex)
+        for item in self.dataset_iter:
+            processed_examples = list(itertools.chain.from_iterable(item))
+            for ex in processed_examples:
+                bucket.append(ex)
             if len(bucket) == self.bucket_size:
                 print("####### time to fill the bucket {}".format(
                     time.time() - start))
@@ -316,20 +343,25 @@ class DynamicBatchtIter(torch.utils.data.DataLoader):
 
     def __iter__(self):
         for bucket in self._bucketing():
-            print("####### batching")
             # For TRAIN we need to group examples by length
             # for faster performance, but otherwise, sequential.
             if self.task == CorpusTask.TRAIN:
+                start = time.time()
                 bucket = sorted(bucket, key=self.sort_key)
+                print('######## time to sort the bucket {}'.format(time.time() - start))
+            start = time.time()
             p_batch = list(self.batch_iter(
                 bucket,
                 self.batch_size,
                 batch_size_fn=self.batch_size_fn,
                 batch_size_multiple=self.batch_size_multiple))
+            print('######## time to batch the bucket {}'.format(time.time() - start))
             # For TRAIN we shuffle batches within the bucket
             # otherwise sequential
             if self.task == CorpusTask.TRAIN:
+                start = time.time()
                 p_batch = self.random_shuffler(p_batch)
+                print('######## time to shuffle {}'.format(time.time() - start))
             for minibatch in p_batch:
                 # for specific case of rnn_packed need to be sorted
                 # within the batch
