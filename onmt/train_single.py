@@ -107,8 +107,7 @@ def _get_model_opts(opt, checkpoint=None):
 def _build_valid_iter(opt, transforms_cls, vocabs):
     """Build iterator used for validation."""
     valid_iter = build_dynamic_dataset_iter(
-        opt, transforms_cls, vocabs, task=CorpusTask.VALID,
-        copy=opt.copy_attn)
+        opt, transforms_cls, vocabs, task=CorpusTask.VALID)
     return valid_iter
 
 
@@ -116,9 +115,10 @@ def _build_train_iter(opt, transforms_cls, vocabs, stride=1, offset=0):
     """Build training iterator."""
     train_iter = build_dynamic_dataset_iter(
         opt, transforms_cls, vocabs, task=CorpusTask.TRAIN,
-        copy=opt.copy_attn, stride=stride, offset=offset)
+        stride=stride, offset=offset)
     batch_iter = build_dynamic_batch_iter(train_iter, vocabs, opt,
-                                          task=CorpusTask.TRAIN)
+                                          task=CorpusTask.TRAIN,
+                                          copy=opt.copy_attn)
     return batch_iter
 
 
