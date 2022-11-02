@@ -633,8 +633,8 @@ def _add_train_dynamic_data(parser):
                    from the various Corpora. The dynamic iterator batches
                    batch_size batchs from the bucket and shuffle them.""")
     group.add("-prefetch_factor", "--prefetch_factor", type=int, default=100,
-              help="""number of mini-batches (examples) loaded in advance to avoid the
-                   GPU waiting during the refilling of the bucket.""")
+              help="""number of mini-batches (examples) loaded in advance to
+                   avoid the PU waiting during the refilling of the bucket.""")
 
 
 def train_opts(parser):

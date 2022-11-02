@@ -214,6 +214,7 @@ def build_dynamic_dataset_iter(opt, transforms_cls, vocabs,
         data_iter._init_datasets(0)  # when workers=0 init_fn not called
         data_loader = data_iter
     else:
+        print('######## prefetch_factor: {}'.format(opt.prefetch_factor))
         data_loader = DataLoader(data_iter, batch_size=None,
                                  pin_memory=True,
                                  multiprocessing_context="fork",
