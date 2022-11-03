@@ -273,32 +273,27 @@ class DynamicBatchtIter(torch.utils.data.DataLoader):
         return bucket
 
     def _bucketing(self):
-        # print("####### bucketing {} examples".format(self.bucket_size))
-        # start = time.time()
-        # bucket = []
-        # for processed_ex in self.dataset_iter:
-        #     bucket.append(processed_ex)
-        #     if len(bucket) == self.bucket_size:
-        #         print("####### time to fill the bucket {}".format(
-        #             time.time() - start))
-        #         yield self._tuple_to_json_with_tokIDs(bucket)
-        #         bucket = []
-        # if bucket:
-        #     yield self._tuple_to_json_with_tokIDs(bucket)
         print("####### bucketing {} examples".format(self.bucket_size))
         start = time.time()
         bucket = []
+        _bucket_size = int(self.bucket_size/10)
+        print("#### INITIAL bucket_size: %d" % _bucket_size)
         for item in self.dataset_iter:
             processed_examples = []
             for ex in item:
                 processed_examples.append(ex)
             for ex in processed_examples:
                 bucket.append(ex)
-            if len(bucket) == self.bucket_size:
-                print("####### time to fill the bucket {}".format(
+            if len(bucket) == _bucket_size:
+                print("####### time to fill the bucket: {}".format(
                     time.time() - start))
                 yield self._tuple_to_json_with_tokIDs(bucket)
                 bucket = []
+                if _bucket_size < self.bucket_size:
+                    _bucket_size = _bucket_size * 2
+                else:
+                    _bucket_size = self.bucket_size
+                print("updated bucket_size to %d" % _bucket_size)
         if bucket:
             yield self._tuple_to_json_with_tokIDs(bucket)
 
