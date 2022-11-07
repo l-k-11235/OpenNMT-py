@@ -1,12 +1,15 @@
 """Module that contain iterator used for dynamic data."""
+import torch
 from itertools import cycle
-
-from torchtext.data import batch as torchtext_batch
-from onmt.inputters import str2sortkey, max_tok_len, OrderedIterator
-from onmt.inputters.corpus import get_corpora, build_corpora_iters,\
-    DatasetAdapter
+from onmt.constants import CorpusTask, ModelTask
+from onmt.inputters.text_corpus import get_corpora, build_corpora_iters
+from onmt.inputters.text_utils import text_sort_key, max_tok_len, process,\
+    numericalize, tensorify, _addcopykeys
 from onmt.transforms import make_transforms
 from onmt.utils.logging import logger
+from onmt.utils.misc import RandomShuffler
+from torch.utils.data import DataLoader
+import time
 
 
 class MixingStrategy(object):
@@ -83,49 +86,37 @@ class WeightedMixer(MixingStrategy):
                 yield item
 
 
-class DynamicDatasetIter(object):
-    """Yield batch from (multiple) plain text corpus.
+class DynamicDatasetIter(torch.utils.data.IterableDataset):
+    """Yield processed examples from (multiple) plain text corpus.
 
     Args:
         corpora (dict[str, ParallelCorpus]): collections of corpora to iterate;
         corpora_info (dict[str, dict]): corpora infos correspond to corpora;
         transforms (dict[str, Transform]): transforms may be used by corpora;
-        fields (dict[str, Field]): fields dict for convert corpora into Tensor;
-        is_train (bool): True when generate data for training;
-        batch_type (str): batching type to count on, choices=[tokens, sents];
-        batch_size (int): numbers of examples in a batch;
-        batch_size_multiple (int): make batch size multiply of this;
+        vocabs (dict[str, Vocab]): vocab dict for convert corpora into Tensor;
+        task (str): CorpusTask.TRAIN/VALID/INFER;
         data_type (str): input data type, currently only text;
-        bucket_size (int): accum this number of examples in a dynamic dataset;
-        pool_factor (int): accum this number of batch before sorting;
+        copy (Bool): if True, will add specific items for copy_attn
         skip_empty_level (str): security level when encouter empty line;
         stride (int): iterate data files with this stride;
         offset (int): iterate data files with this offset.
 
     Attributes:
-        batch_size_fn (function): functions to calculate batch_size;
         sort_key (function): functions define how to sort examples;
-        dataset_adapter (DatasetAdapter): organize raw corpus to tensor adapt;
         mixer (MixingStrategy): the strategy to iterate corpora.
     """
 
-    def __init__(self, corpora, corpora_info, transforms, fields, is_train,
-                 batch_type, batch_size, batch_size_multiple, data_type="text",
-                 bucket_size=2048, pool_factor=8192,
-                 skip_empty_level='warning', stride=1, offset=0):
+    def __init__(self, corpora, corpora_info, transforms, vocabs, task,
+                 data_type="text", skip_empty_level='warning',
+                 stride=1, offset=0):
+        super(DynamicDatasetIter).__init__()
         self.corpora = corpora
         self.transforms = transforms
-        self.fields = fields
+        self.vocabs = vocabs
         self.corpora_info = corpora_info
-        self.is_train = is_train
+        self.task = task
         self.init_iterators = False
-        self.batch_size = batch_size
-        self.batch_size_fn = max_tok_len if batch_type == "tokens" else None
-        self.batch_size_multiple = batch_size_multiple
         self.device = 'cpu'
-        self.sort_key = str2sortkey[data_type]
-        self.bucket_size = bucket_size
-        self.pool_factor = pool_factor
         if stride <= 0:
             raise ValueError(f"Invalid argument for stride={stride}.")
         self.stride = stride
@@ -134,77 +125,266 @@ class DynamicDatasetIter(object):
             raise ValueError(
                 f"Invalid argument skip_empty_level={skip_empty_level}")
         self.skip_empty_level = skip_empty_level
+        self.random_shuffler = RandomShuffler()
 
     @classmethod
-    def from_opts(cls, corpora, transforms, fields, opts, is_train,
-                  stride=1, offset=0):
-        """Initilize `DynamicDatasetIter` with options parsed from `opts`."""
-        batch_size = opts.batch_size if is_train else opts.valid_batch_size
-        if opts.batch_size_multiple is not None:
-            batch_size_multiple = opts.batch_size_multiple
+    def from_opt(cls, corpora, transforms, vocabs, opt, task,
+                 stride=1, offset=0):
+        """Initilize `DynamicDatasetIter` with options parsed from `opt`."""
+        corpora_info = {}
+        if task != CorpusTask.INFER:
+            corpora_info = opt.data
+            skip_empty_level = opt.skip_empty_level
         else:
-            batch_size_multiple = 8 if opts.model_dtype == "fp16" else 1
+            corpora_info[CorpusTask.INFER] = {'transforms': opt.transforms}
+            corpora_info[CorpusTask.INFER]['weight'] = 1
+            skip_empty_level = 'warning'
         return cls(
-            corpora, opts.data, transforms, fields, is_train, opts.batch_type,
-            batch_size, batch_size_multiple, data_type=opts.data_type,
-            bucket_size=opts.bucket_size, pool_factor=opts.pool_factor,
-            skip_empty_level=opts.skip_empty_level,
+            corpora, corpora_info, transforms, vocabs, task,
+            data_type=opt.data_type,
+            skip_empty_level=skip_empty_level,
             stride=stride, offset=offset
         )
 
-    def _init_datasets(self):
+    def _init_datasets(self, worker_id):
+        if self.num_workers > 0:
+            stride = self.stride * self.num_workers
+            offset = self.offset * self.num_workers + worker_id
+        else:
+            stride = self.stride
+            offset = self.offset
         datasets_iterables = build_corpora_iters(
             self.corpora, self.transforms, self.corpora_info,
             skip_empty_level=self.skip_empty_level,
-            stride=self.stride, offset=self.offset)
-        self.dataset_adapter = DatasetAdapter(self.fields, self.is_train)
+            stride=stride, offset=offset)
         datasets_weights = {
             ds_name: int(self.corpora_info[ds_name]['weight'])
             for ds_name in datasets_iterables.keys()
         }
-        if self.is_train:
+        if self.task == CorpusTask.TRAIN:
             self.mixer = WeightedMixer(datasets_iterables, datasets_weights)
         else:
             self.mixer = SequentialMixer(datasets_iterables, datasets_weights)
         self.init_iterators = True
 
+    def __iter__(self):
+        # processed_ex = None
+        # for ex in self.mixer:
+        #     # print("#############")
+        #     # print(ex)
+        #     processed_ex = process(self.task, ex)
+        #     # print(processed_ex)
+        #     if processed_ex is not None:
+        #         yield processed_ex
+        #         processed_ex = None
+        list_ex = []
+        n = 10
+        # start = time.time()
+        for ex in self.mixer:
+            processed_ex = process(self.task, ex)
+            if processed_ex is not None:
+                list_ex.append(processed_ex)
+            if len(list_ex) == n:
+                # print('######## time to process {} examples: {}'.format(
+                # n, time.time() - start))
+                yield list_ex
+                list_ex = []
+        if list_ex:
+            yield list_ex
+
+
+def build_dynamic_dataset_iter(opt, transforms_cls, vocabs,
+                               task=CorpusTask.TRAIN, stride=1, offset=0):
+    """
+    Build `DynamicDatasetIter` from opt.
+    Typically this function is called for CorpusTask.[TRAIN,VALID,INFER]
+    from the main tain / translate scripts
+    """
+    transforms = make_transforms(opt, transforms_cls, vocabs)
+    corpora = get_corpora(opt, task)
+    if corpora is None:
+        assert task != CorpusTask.TRAIN, "only valid corpus is ignorable."
+        return None
+    data_iter = DynamicDatasetIter.from_opt(
+        corpora, transforms, vocabs, opt, task,
+        stride=stride, offset=offset)
+    data_iter.num_workers = opt.num_workers if \
+        hasattr(opt, 'num_workers') else 0
+    if data_iter.num_workers == 0 or task == CorpusTask.INFER:
+        data_iter._init_datasets(0)  # when workers=0 init_fn not called
+        data_loader = data_iter
+    else:
+        print('######## prefetch_factor: {}'.format(opt.prefetch_factor))
+        data_loader = DataLoader(data_iter, batch_size=None,
+                                 pin_memory=True,
+                                 multiprocessing_context="fork",
+                                 num_workers=data_iter.num_workers,
+                                 worker_init_fn=data_iter._init_datasets,
+                                 prefetch_factor=opt.prefetch_factor)
+    return data_loader
+
+
+class DynamicBatchtIter(torch.utils.data.DataLoader):
+    def __init__(self, dataset_iter,
+                 vocabs, task, batch_type,
+                 batch_size, batch_size_multiple,
+                 bucket_size=2048, bucket_size_init=-1,
+                 bucket_size_increment=0, copy=False):
+        self.dataset_iter = dataset_iter
+        self.batch_size_multiple = batch_size_multiple
+        self.bucket_size = bucket_size
+        self.bucket_size_init = bucket_size_init
+        self.bucket_size_increment = bucket_size_increment
+        self.batch_size = batch_size
+        self.copy = copy
+        self.batch_size_fn = max_tok_len if batch_type == "tokens" else None
+        self.task = task
+        self.sort_key = text_sort_key
+        self.vocabs = vocabs
+        self.random_shuffler = RandomShuffler()
+
+    @classmethod
+    def from_opt(cls, dataset_iter, vocabs, opt, task, copy):
+        """Initilize `DynamicDatasetIter` with options parsed from `opt`."""
+        batch_size = opt.valid_batch_size if (task == CorpusTask.VALID) \
+            else opt.batch_size
+        if task != CorpusTask.INFER:
+            if opt.batch_size_multiple is not None:
+                batch_size_multiple = opt.batch_size_multiple
+            else:
+                batch_size_multiple = 8 if opt.model_dtype == "fp16" else 1
+            bucket_size = opt.bucket_size
+            bucket_size_init = opt.bucket_size_init
+            bucket_size_increment = opt.bucket_size_increment
+        else:
+            batch_size_multiple = 1
+            bucket_size = 16384
+            bucket_size_init = -1
+            bucket_size_increment = 0
+        if task == CorpusTask.INFER and \
+           vocabs['data_task'] == ModelTask.LANGUAGE_MODEL:
+            # We only support
+            batch_size_multiple = 1
+            batch_size = 1
+        return cls(
+            dataset_iter, vocabs, task, opt.batch_type,
+            batch_size, batch_size_multiple,
+            bucket_size=bucket_size, bucket_size_init=bucket_size_init,
+            bucket_size_increment=bucket_size_increment, copy=copy)
+
+    def _tuple_to_json_with_tokIDs(self, tuple_bucket):
+        bucket = []
+        for example in tuple_bucket:
+            if example is not None:
+                if self.copy:
+                    example = _addcopykeys(self.vocabs, example)
+                bucket.append(numericalize(self.vocabs, example))
+        return bucket
+
     def _bucketing(self):
-        buckets = torchtext_batch(
-            self.mixer,
-            batch_size=self.bucket_size,
-            batch_size_fn=None)
-        yield from buckets
+        print("####### bucketing {} examples".format(self.bucket_size))
+        start = time.time()
+        bucket = []
+        if self.bucket_size_init > 0:
+            _bucket_size = self.bucket_size_init
+        else:
+            _bucket_size = self.bucket_size
+        print("#### INITIAL bucket_size: %d" % _bucket_size)
+        for item in self.dataset_iter:
+            processed_examples = []
+            for ex in item:
+                processed_examples.append(ex)
+            for ex in processed_examples:
+                bucket.append(ex)
+            if len(bucket) == _bucket_size:
+                print("####### time to fill the bucket: {}".format(
+                    time.time() - start))
+                yield self._tuple_to_json_with_tokIDs(bucket)
+                bucket = []
+                if _bucket_size < self.bucket_size:
+                    _bucket_size += self.bucket_size_increment
+                else:
+                    _bucket_size = self.bucket_size
+                print("updated bucket_size to %d" % _bucket_size)
+        if bucket:
+            yield self._tuple_to_json_with_tokIDs(bucket)
+
+    def batch_iter(self, data, batch_size, batch_size_fn=None,
+                   batch_size_multiple=1):
+        """Yield elements from data in chunks of batch_size,
+        where each chunk size is a multiple of batch_size_multiple.
+        """
+        if batch_size_fn is None:
+            def batch_size_fn(new, count, sofar):
+                return count
+        minibatch, size_so_far, seen = [], 0, []
+        for ex in data:
+            if ex['src']['src'] not in seen:
+                seen.append(ex['src']['src'])
+                minibatch.append(ex)
+                size_so_far = batch_size_fn(ex, len(minibatch), size_so_far)
+                if size_so_far >= batch_size:
+                    overflowed = 0
+                    if size_so_far > batch_size:
+                        overflowed += 1
+                    if batch_size_multiple > 1:
+                        overflowed += (
+                            (len(minibatch) - overflowed)
+                            % batch_size_multiple)
+                    if overflowed == 0:
+                        yield minibatch
+                        minibatch, size_so_far, seen = [], 0, []
+                    else:
+                        if overflowed == len(minibatch):
+                            logger.warning(
+                                "The batch will be filled until we reach %d,"
+                                "its size may exceed %d tokens"
+                                % (batch_size_multiple, batch_size)
+                                )
+                        else:
+                            yield minibatch[:-overflowed]
+                            minibatch = minibatch[-overflowed:]
+                            size_so_far, seen = 0, []
+                            for i, ex in enumerate(minibatch):
+                                size_so_far = batch_size_fn(ex, i + 1,
+                                                            size_so_far)
+        if minibatch:
+            yield minibatch
 
     def __iter__(self):
-        if self.init_iterators is False:
-            self._init_datasets()
         for bucket in self._bucketing():
-            dataset = self.dataset_adapter(bucket)
-            train_iter = OrderedIterator(
-                dataset,
+            # For TRAIN we need to group examples by length
+            # for faster performance, but otherwise, sequential.
+            if self.task == CorpusTask.TRAIN:
+                start = time.time()
+                bucket = sorted(bucket, key=self.sort_key)
+                print('######## time to sort the bucket {}'.format(
+                    time.time() - start))
+            start = time.time()
+            p_batch = list(self.batch_iter(
+                bucket,
                 self.batch_size,
-                pool_factor=self.pool_factor,
                 batch_size_fn=self.batch_size_fn,
-                batch_size_multiple=self.batch_size_multiple,
-                device=self.device,
-                train=self.is_train,
-                sort=False,
-                sort_within_batch=True,
-                sort_key=self.sort_key,
-                repeat=False,
-            )
-            for batch in train_iter:
-                yield batch
+                batch_size_multiple=self.batch_size_multiple))
+            print('######## time to batch the bucket {}'.format(
+                time.time() - start))
+            # For TRAIN we shuffle batches within the bucket
+            # otherwise sequential
+            if self.task == CorpusTask.TRAIN:
+                start = time.time()
+                p_batch = self.random_shuffler(p_batch)
+                print('######## time to shuffle {}'.format(
+                    time.time() - start))
+            for minibatch in p_batch:
+                # for specific case of rnn_packed need to be sorted
+                # within the batch
+                minibatch.sort(key=self.sort_key, reverse=True)
+                tensor_batch = tensorify(self.vocabs, minibatch)
+                yield tensor_batch
 
 
-def build_dynamic_dataset_iter(fields, transforms_cls, opts, is_train=True,
-                               stride=1, offset=0):
-    """Build `DynamicDatasetIter` from fields & opts."""
-    transforms = make_transforms(opts, transforms_cls, fields)
-    corpora = get_corpora(opts, is_train)
-    if corpora is None:
-        assert not is_train, "only valid corpus is ignorable."
-        return None
-    return DynamicDatasetIter.from_opts(
-        corpora, transforms, fields, opts, is_train,
-        stride=stride, offset=offset)
+def build_dynamic_batch_iter(dataset_iter, vocabs, opt,
+                             task=CorpusTask.TRAIN, copy=False):
+    batch_iter = DynamicBatchtIter.from_opt(dataset_iter, vocabs, opt,
+                                            task, copy)
+    return batch_iter

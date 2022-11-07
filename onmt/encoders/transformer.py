@@ -33,7 +33,8 @@ class TransformerEncoderLayer(nn.Module):
 
         self.self_attn = MultiHeadedAttention(
             heads, d_model, dropout=attention_dropout,
-            max_relative_positions=max_relative_positions)
+            max_relative_positions=max_relative_positions,
+            attn_type="self")
         self.feed_forward = PositionwiseFeedForward(d_model, d_ff, dropout,
                                                     pos_ffn_activation_fn)
         self.layer_norm = nn.LayerNorm(d_model, eps=1e-6)
@@ -52,7 +53,7 @@ class TransformerEncoderLayer(nn.Module):
         """
         input_norm = self.layer_norm(inputs)
         context, _ = self.self_attn(input_norm, input_norm, input_norm,
-                                    mask=mask, attn_type="self")
+                                    mask=mask)
         out = self.dropout(context) + inputs
         return self.feed_forward(out)
 
@@ -127,12 +128,15 @@ class TransformerEncoder(EncoderBase):
 
     def forward(self, src, lengths=None):
         """See :func:`EncoderBase.forward()`"""
-        self._check_args(src, lengths)
 
         emb = self.embeddings(src)
 
         out = emb.transpose(0, 1).contiguous()
         mask = ~sequence_mask(lengths).unsqueeze(1)
+        mask = mask.unsqueeze(1)
+        mask = mask.expand(-1, -1, mask.size(3), -1)
+        # mask is now (batch x 1 x slen x slen)
+        # 1 to be expanded to number of heads in MHA
         # Run the forward pass of every layer of the tranformer.
         for layer in self.transformer:
             out = layer(out, mask)
