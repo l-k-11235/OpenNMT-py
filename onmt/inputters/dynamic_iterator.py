@@ -227,10 +227,14 @@ def build_dynamic_dataset_iter(opt, transforms_cls, vocabs,
 class DynamicBatchtIter(torch.utils.data.DataLoader):
     def __init__(self, dataset_iter,
                  vocabs, task, batch_type,
-                 batch_size, batch_size_multiple, bucket_size, copy=False):
+                 batch_size, batch_size_multiple,
+                 bucket_size=2048, bucket_size_init=-1,
+                 bucket_size_increment=0, copy=False):
         self.dataset_iter = dataset_iter
         self.batch_size_multiple = batch_size_multiple
         self.bucket_size = bucket_size
+        self.bucket_size_init = bucket_size_init
+        self.bucket_size_increment = bucket_size_increment
         self.batch_size = batch_size
         self.copy = copy
         self.batch_size_fn = max_tok_len if batch_type == "tokens" else None
@@ -250,9 +254,13 @@ class DynamicBatchtIter(torch.utils.data.DataLoader):
             else:
                 batch_size_multiple = 8 if opt.model_dtype == "fp16" else 1
             bucket_size = opt.bucket_size
+            bucket_size_init = opt.bucket_size_init
+            bucket_size_increment = opt.bucket_size_increment
         else:
             batch_size_multiple = 1
             bucket_size = 16384
+            bucket_size_init = -1
+            bucket_size_increment = 0
         if task == CorpusTask.INFER and \
            vocabs['data_task'] == ModelTask.LANGUAGE_MODEL:
             # We only support
@@ -261,7 +269,8 @@ class DynamicBatchtIter(torch.utils.data.DataLoader):
         return cls(
             dataset_iter, vocabs, task, opt.batch_type,
             batch_size, batch_size_multiple,
-            bucket_size=bucket_size, copy=copy)
+            bucket_size=bucket_size, bucket_size_init=bucket_size_init,
+            bucket_size_increment=bucket_size_increment, copy=copy)
 
     def _tuple_to_json_with_tokIDs(self, tuple_bucket):
         bucket = []
@@ -276,7 +285,10 @@ class DynamicBatchtIter(torch.utils.data.DataLoader):
         print("####### bucketing {} examples".format(self.bucket_size))
         start = time.time()
         bucket = []
-        _bucket_size = int(self.bucket_size/10)
+        if self.bucket_size_init > 0:
+            _bucket_size = self.bucket_size_init
+        else:
+            _bucket_size = self.bucket_size
         print("#### INITIAL bucket_size: %d" % _bucket_size)
         for item in self.dataset_iter:
             processed_examples = []
@@ -290,7 +302,7 @@ class DynamicBatchtIter(torch.utils.data.DataLoader):
                 yield self._tuple_to_json_with_tokIDs(bucket)
                 bucket = []
                 if _bucket_size < self.bucket_size:
-                    _bucket_size = _bucket_size * 2
+                    _bucket_size += self.bucket_size_increment
                 else:
                     _bucket_size = self.bucket_size
                 print("updated bucket_size to %d" % _bucket_size)
