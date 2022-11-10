@@ -639,6 +639,10 @@ def _add_train_dynamic_data(parser):
               type=int, default=0,
               help="""The bucket size is incremented with this
               amount of examples (optional)""")
+    group.add("-ex_batch_size", "--ex_batch_size",
+              type=int, default=1,
+              help="""The DataLoader yields mini batches with this amount of examples
+              must divide bucket_size""")
     group.add("-prefetch_factor", "--prefetch_factor", type=int, default=2,
               help="""number of mini-batches (examples) loaded in advance to
                    avoid the PU waiting during the refilling of the bucket.""")

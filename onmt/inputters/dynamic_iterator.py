@@ -108,7 +108,8 @@ class DynamicDatasetIter(torch.utils.data.IterableDataset):
 
     def __init__(self, corpora, corpora_info, transforms, vocabs, task,
                  data_type="text", skip_empty_level='warning',
-                 stride=1, offset=0):
+                 stride=1, offset=0, copy=False,
+                 ex_batch_size=1):
         super(DynamicDatasetIter).__init__()
         self.corpora = corpora
         self.transforms = transforms
@@ -121,6 +122,8 @@ class DynamicDatasetIter(torch.utils.data.IterableDataset):
             raise ValueError(f"Invalid argument for stride={stride}.")
         self.stride = stride
         self.offset = offset
+        self.copy = copy
+        self.ex_batch_size = ex_batch_size
         if skip_empty_level not in ['silent', 'warning', 'error']:
             raise ValueError(
                 f"Invalid argument skip_empty_level={skip_empty_level}")
@@ -129,7 +132,7 @@ class DynamicDatasetIter(torch.utils.data.IterableDataset):
 
     @classmethod
     def from_opt(cls, corpora, transforms, vocabs, opt, task,
-                 stride=1, offset=0):
+                 stride=1, offset=0, copy=False):
         """Initilize `DynamicDatasetIter` with options parsed from `opt`."""
         corpora_info = {}
         if task != CorpusTask.INFER:
@@ -143,7 +146,8 @@ class DynamicDatasetIter(torch.utils.data.IterableDataset):
             corpora, corpora_info, transforms, vocabs, task,
             data_type=opt.data_type,
             skip_empty_level=skip_empty_level,
-            stride=stride, offset=offset
+            stride=stride, offset=offset, copy=copy,
+            ex_batch_size=opt.ex_batch_size
         )
 
     def _init_datasets(self, worker_id):
@@ -168,29 +172,22 @@ class DynamicDatasetIter(torch.utils.data.IterableDataset):
         self.init_iterators = True
 
     def __iter__(self):
-        # processed_ex = None
-        # for ex in self.mixer:
-        #     # print("#############")
-        #     # print(ex)
-        #     processed_ex = process(self.task, ex)
-        #     # print(processed_ex)
-        #     if processed_ex is not None:
-        #         yield processed_ex
-        #         processed_ex = None
-        list_ex = []
-        n = 10
-        # start = time.time()
+        start = time.time()
+        res = []
         for ex in self.mixer:
             processed_ex = process(self.task, ex)
             if processed_ex is not None:
-                list_ex.append(processed_ex)
-            if len(list_ex) == n:
-                # print('######## time to process {} examples: {}'.format(
-                # n, time.time() - start))
-                yield list_ex
-                list_ex = []
-        if list_ex:
-            yield list_ex
+                if self.copy:
+                    processed_ex = _addcopykeys(self.vocabs, processed_ex)
+                processed_ex = numericalize(self.vocabs, processed_ex)
+                res.append(processed_ex)
+            if len(res) == self.ex_batch_size:
+                print("yielded {} examples in {} s".format(
+                    self.ex_batch_size, time.time() - start))
+                yield res
+                res = []
+        if res:
+            yield res
 
 
 def build_dynamic_dataset_iter(opt, transforms_cls, vocabs,
@@ -299,7 +296,8 @@ class DynamicBatchtIter(torch.utils.data.DataLoader):
             if len(bucket) == _bucket_size:
                 print("####### time to fill the bucket: {}".format(
                     time.time() - start))
-                yield self._tuple_to_json_with_tokIDs(bucket)
+                yield bucket
+                # yield self._tuple_to_json_with_tokIDs(bucket)
                 bucket = []
                 if _bucket_size < self.bucket_size:
                     _bucket_size += self.bucket_size_increment
@@ -307,7 +305,8 @@ class DynamicBatchtIter(torch.utils.data.DataLoader):
                     _bucket_size = self.bucket_size
                 print("updated bucket_size to %d" % _bucket_size)
         if bucket:
-            yield self._tuple_to_json_with_tokIDs(bucket)
+            yield bucket
+            # yield self._tuple_to_json_with_tokIDs(bucket)
 
     def batch_iter(self, data, batch_size, batch_size_fn=None,
                    batch_size_multiple=1):
