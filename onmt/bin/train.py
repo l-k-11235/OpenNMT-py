@@ -112,7 +112,7 @@ def train(opt):
 
     nb_gpu = len(opt.gpu_ranks)
 
-    if opt.world_size > 1:
+    if opt.world_size >= 1:
 
         queues = []
         mp = torch.multiprocessing.get_context('spawn')
