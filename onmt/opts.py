@@ -695,7 +695,7 @@ def train_opts(parser):
     _add_train_dynamic_data(parser)
 
 
-def _add_decoding_opts(parser):
+def _add_decoding_opts(parser, repr=True):
     group = parser.add_argument_group('Beam Search')
     beam_size = group.add('--beam_size', '-beam_size', type=int, default=5,
                           help='Beam size')
@@ -720,7 +720,8 @@ def _add_decoding_opts(parser):
               help="If doing random sampling, divide the logits by "
                    "this before computing softmax during decoding.")
     group._group_actions.append(beam_size)
-    _add_reproducibility_opts(parser)
+    if repr:
+        _add_reproducibility_opts(parser)
 
     group = parser.add_argument_group(
         'Penalties',
@@ -781,11 +782,11 @@ def _add_decoding_opts(parser):
                    "the table), then it will copy the source token.")
 
 
-def translate_opts(parser, dynamic=False):
+def translate_opts(parser, dynamic=False, is_train=False):
     """ Translation / inference options """
     group = parser.add_argument_group('Model')
     group.add('--model', '-model', dest='models', metavar='MODEL',
-              nargs='+', type=str, default=[], required=True,
+              nargs='+', type=str, default=[], required=False,
               help="Path to model .pt file(s). "
                    "Multiple models can be specified, "
                    "for ensemble decoding.")
@@ -803,10 +804,11 @@ def translate_opts(parser, dynamic=False):
                    "zero probability.")
 
     group = parser.add_argument_group('Data')
-    group.add('--data_type', '-data_type', default="text",
-              help="Type of the source input. Options: [text].")
+    if not is_train:
+        group.add('--data_type', '-data_type', default="text",
+                  help="Type of the source input. Options: [text].")
 
-    group.add('--src', '-src', required=True,
+    group.add('--src', '-src', required=False, default='dummy',
               help="Source sequence to decode (one line per "
                    "sequence)")
     group.add('--tgt', '-tgt',
@@ -825,23 +827,25 @@ def translate_opts(parser, dynamic=False):
               help="Report some translation time metrics")
 
     # Adding options related to source and target features
-    _add_features_opts(parser)
+    if not is_train:
+        _add_features_opts(parser)
 
     # Adding options relate to decoding strategy
-    _add_decoding_opts(parser)
+    _add_decoding_opts(parser, repr=False)
 
     # Adding option for logging
-    _add_logging_opts(parser, is_train=False)
+    if not is_train:
+        _add_logging_opts(parser, is_train=False)
 
-    group = parser.add_argument_group('Efficiency')
-    group.add('--batch_size', '-batch_size', type=int, default=30,
-              help='Batch size')
-    group.add('--batch_type', '-batch_type', default='sents',
-              choices=["sents", "tokens"],
+        group = parser.add_argument_group('Efficiency')
+        group.add('--batch_size', '-batch_size', type=int, default=30,
+                   help='Batch size')
+        group.add('--batch_type', '-batch_type', default='sents',
+                  choices=["sents", "tokens"],
               help="Batch grouping for batch_size. Standard "
                    "is sents. Tokens will do dynamic batching")
-    group.add('--gpu', '-gpu', type=int, default=-1,
-              help="Device to run on")
+        group.add('--gpu', '-gpu', type=int, default=-1,
+                  help="Device to run on")
 
     if dynamic:
         group.add("-transforms", "--transforms", default=[], nargs="+",

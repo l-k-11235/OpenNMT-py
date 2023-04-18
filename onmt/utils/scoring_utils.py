@@ -2,7 +2,6 @@ import codecs
 import os
 from onmt.utils.parse import ArgumentParser
 from onmt.translate import GNMTGlobalScorer, Translator
-from onmt.opts import translate_opts
 from onmt.constants import DefaultTokens
 from onmt.inputters.text_utils import _addcopykeys, tensorify, text_sort_key
 from onmt.inputters.inputter import IterOnDevice
@@ -14,12 +13,16 @@ class ScoringPreparator():
     """Allow the calculation of metrics via the Trainer's
      training_eval_handler method.
     """
+    # def __init__(self, vocabs, opt, translate_opt):
     def __init__(self, vocabs, opt):
         self.vocabs = vocabs
         self.opt = opt
+        # self.translate_opt = translate_opt
+
         if self.opt.dump_preds is not None:
             if not os.path.exists(self.opt.dump_preds):
                 os.makedirs(self.opt.dump_preds)
+
         self.transforms = opt.transforms
         transforms_cls = get_transforms_cls(self.transforms)
         transforms = make_transforms(self.opt, transforms_cls, self.vocabs)
@@ -123,24 +126,23 @@ class ScoringPreparator():
             texts_ref (list): Detokenized target sentences
         """
         model_opt = self.opt
-        parser = ArgumentParser()
-        translate_opts(parser)
-        base_args = (["-model", "dummy"] + ["-src", "dummy"])
-        opt = parser.parse_args(base_args)
-        opt.gpu = gpu_rank
-        ArgumentParser.validate_translate_opts(opt)
+        translate_opt = self.opt
+        # translate_opt = self.translate_opt
         ArgumentParser.update_model_opts(model_opt)
         ArgumentParser.validate_model_opts(model_opt)
-        scorer = GNMTGlobalScorer.from_opt(opt)
+
+        translate_opt.gpu = gpu_rank
+        print("translate_opt in dynamic scoring: ", translate_opt)
+        scorer = GNMTGlobalScorer.from_opt(translate_opt)
         out_file = codecs.open(os.devnull, "w", "utf-8")
         translator = Translator.from_opt(
             model,
             self.vocabs,
-            opt,
-            model_opt,
+            translate_opt,
+            # model_opt,
             global_scorer=scorer,
             out_file=out_file,
-            report_align=opt.report_align,
+            report_align=translate_opt.report_align,
             report_score=False,
             logger=None)
         # translate
@@ -175,7 +177,7 @@ class ScoringPreparator():
                     numeric.append(num_ex)
             numeric.sort(key=text_sort_key, reverse=True)
             infer_iter = [tensorify(self.vocabs, numeric)]
-            infer_iter = IterOnDevice(infer_iter, opt.gpu)
+            infer_iter = IterOnDevice(infer_iter, translate_opt.gpu)
             _, preds_ = translator._translate(
                         infer_iter, transform=self.transform)
             preds += preds_

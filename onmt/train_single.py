@@ -139,19 +139,20 @@ def _build_train_iter(opt, transforms_cls, vocabs, stride=1, offset=0):
     return train_iter
 
 
-def main(opt, device_id):
+# def main(train_opt, translate_opt, device_id):
+def main(train_opt, device_id):
     """Start training on `device_id`."""
     # NOTE: It's important that ``opt`` has been validated and updated
     # at this point.
 
-    configure_process(opt, device_id)
-    init_logger(opt.log_file)
+    configure_process(train_opt, device_id)
+    init_logger(train_opt.log_file)
 
-    checkpoint, vocabs, transforms_cls = _init_train(opt)
-    model_opt = _get_model_opts(opt, checkpoint=checkpoint)
+    checkpoint, vocabs, transforms_cls = _init_train(train_opt)
+    model_opt = _get_model_opts(train_opt, checkpoint=checkpoint)
 
     # Build model.
-    model = build_model(model_opt, opt, vocabs, checkpoint)
+    model = build_model(model_opt, train_opt, vocabs, checkpoint)
 
     model.count_parameters(log=logger.info)
     logger.info(' * src vocab size = %d' % len(vocabs['src']))
@@ -161,38 +162,40 @@ def main(opt, device_id):
             logger.info(f'* src_feat {i} vocab size = {len(feat_vocab)}')
 
     # Build optimizer.
-    optim = Optimizer.from_opt(model, opt, checkpoint=checkpoint)
+    optim = Optimizer.from_opt(model, train_opt, checkpoint=checkpoint)
 
     # Build model saver
-    model_saver = build_model_saver(model_opt, opt, model, vocabs, optim)
+    model_saver = build_model_saver(model_opt, train_opt, model, vocabs, optim)
 
     trainer = build_trainer(
-        opt, device_id, model, vocabs, optim, model_saver=model_saver)
+        train_opt, device_id,
+        # train_opt, translate_opt, device_id,
+        model, vocabs, optim, model_saver=model_saver)
 
-    _train_iter = _build_train_iter(opt, transforms_cls, vocabs,
-                                    stride=max(1, len(opt.gpu_ranks)),
+    _train_iter = _build_train_iter(train_opt, transforms_cls, vocabs,
+                                    stride=max(1, len(train_opt.gpu_ranks)),
                                     offset=max(0, device_id))
     train_iter = IterOnDevice(_train_iter, device_id)
 
-    valid_iter = _build_valid_iter(opt, transforms_cls, vocabs)
+    valid_iter = _build_valid_iter(train_opt, transforms_cls, vocabs)
     if valid_iter is not None:
         valid_iter = IterOnDevice(valid_iter, device_id)
 
-    if len(opt.gpu_ranks):
-        logger.info('Starting training on GPU: %s' % opt.gpu_ranks)
+    if len(train_opt.gpu_ranks):
+        logger.info('Starting training on GPU: %s' % train_opt.gpu_ranks)
     else:
         logger.info('Starting training on CPU, could be very slow')
-    train_steps = opt.train_steps
-    if opt.single_pass and train_steps > 0:
+    train_steps = train_opt.train_steps
+    if train_opt.single_pass and train_steps > 0:
         logger.warning("Option single_pass is enabled, ignoring train_steps.")
         train_steps = 0
 
     trainer.train(
         train_iter,
         train_steps,
-        save_checkpoint_steps=opt.save_checkpoint_steps,
+        save_checkpoint_steps=train_opt.save_checkpoint_steps,
         valid_iter=valid_iter,
-        valid_steps=opt.valid_steps)
+        valid_steps=train_opt.valid_steps)
 
     if trainer.report_manager.tensorboard_writer is not None:
         trainer.report_manager.tensorboard_writer.close()

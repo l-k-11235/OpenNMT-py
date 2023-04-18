@@ -20,12 +20,17 @@ from onmt.utils.scoring_utils import ScoringPreparator
 from onmt.scorers import get_scorers_cls, build_scorers
 
 
-def build_trainer(opt, device_id, model, vocabs, optim, model_saver=None):
+# def build_trainer(train_opt, translate_opt,
+def build_trainer(train_opt,
+                  device_id, model, vocabs, optim, model_saver=None):
     """
     Simplify `Trainer` creation based on user `opt`s*
 
     Args:
-        opt (:obj:`Namespace`): user options (usually from argument parsing)
+        train_opt (:obj:`Namespace`): user train options (usually from
+            argument parsing)
+        translate_opt (:obj:`Namespace`): user translate options (usually from
+            argument parsing)
         model (:obj:`onmt.models.NMTModel`): the model to train
         fields (dict): dict of fields
         optim (:obj:`onmt.utils.Optimizer`): optimizer used during training
@@ -34,11 +39,11 @@ def build_trainer(opt, device_id, model, vocabs, optim, model_saver=None):
         model_saver(:obj:`onmt.models.ModelSaverBase`): the utility object
             used to save the model
     """
-
+    opt = train_opt
     train_loss = LossCompute.from_opts(opt, model, vocabs['tgt'])
     valid_loss = LossCompute.from_opts(opt, model, vocabs['tgt'], train=False)
-
-    scoring_preparator = ScoringPreparator(vocabs=vocabs, opt=opt)
+    scoring_preparator = ScoringPreparator(vocabs=vocabs, opt=opt)#,
+                                           # translate_opt=translate_opt)
     validset_transforms = opt.data.get("valid", {}).get("transforms", None)
     if validset_transforms:
         scoring_preparator.warm_up(validset_transforms)

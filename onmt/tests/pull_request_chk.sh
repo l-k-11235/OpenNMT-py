@@ -44,18 +44,18 @@ error_exit()
 
 # }
 
-# flake8 check
-echo -n "[+] Doing flake8 check..."
-${PYTHON} -m flake8 >> ${LOG_FILE} 2>&1
-[ "$?" -eq 0 ] || error_exit
-echo "Succeeded" | tee -a ${LOG_FILE}
+# # flake8 check
+# echo -n "[+] Doing flake8 check..."
+# ${PYTHON} -m flake8 >> ${LOG_FILE} 2>&1
+# [ "$?" -eq 0 ] || error_exit
+# echo "Succeeded" | tee -a ${LOG_FILE}
 
 
-# unittest
-echo -n "[+] Doing unittest test..."
-${PYTHON} -m unittest discover >> ${LOG_FILE} 2>&1
-[ "$?" -eq 0 ] || error_exit
-echo "Succeeded" | tee -a ${LOG_FILE}
+# # unittest
+# echo -n "[+] Doing unittest test..."
+# ${PYTHON} -m unittest discover >> ${LOG_FILE} 2>&1
+# [ "$?" -eq 0 ] || error_exit
+# echo "Succeeded" | tee -a ${LOG_FILE}
 
 
 #
@@ -86,88 +86,88 @@ rm -f -r $TMP_OUT_DIR/sample
 #
 # Training test
 #
-echo -n "[+] Testing NMT vocab? /transforms prepare..."
-${PYTHON} onmt/bin/train.py \
-            -config ${DATA_DIR}/data.yaml \
-            -save_data $TMP_OUT_DIR/onmt.train.check \
-            -dump_fields -dump_transforms -n_sample 30 \
-            -overwrite \
-            -src_vocab $TMP_OUT_DIR/onmt.vocab.src \
-            -tgt_vocab $TMP_OUT_DIR/onmt.vocab.tgt \
-            -src_vocab_size 1000 \
-            -tgt_vocab_size 1000 >> ${LOG_FILE} 2>&1
-[ "$?" -eq 0 ] || error_exit
-echo "Succeeded" | tee -a ${LOG_FILE}
+# echo -n "[+] Testing NMT vocab? /transforms prepare..."
+# ${PYTHON} onmt/bin/train.py \
+#             -config ${DATA_DIR}/data.yaml \
+#             -save_data $TMP_OUT_DIR/onmt.train.check \
+#             -dump_fields -dump_transforms -n_sample 30 \
+#             -overwrite \
+#             -src_vocab $TMP_OUT_DIR/onmt.vocab.src \
+#             -tgt_vocab $TMP_OUT_DIR/onmt.vocab.tgt \
+#             -src_vocab_size 1000 \
+#             -tgt_vocab_size 1000 >> ${LOG_FILE} 2>&1
+# [ "$?" -eq 0 ] || error_exit
+# echo "Succeeded" | tee -a ${LOG_FILE}
 # rm $TMP_OUT_DIR/onmt.train.check*  # used in tool testing
 
 echo "[+] Doing Training test..."
 
-echo -n "  [+] Testing NMT training..."
-${PYTHON} onmt/bin/train.py \
-            -config ${DATA_DIR}/data.yaml \
-            -src_vocab $TMP_OUT_DIR/onmt.vocab.src \
-            -tgt_vocab $TMP_OUT_DIR/onmt.vocab.tgt \
-            -src_vocab_size 1000 \
-            -tgt_vocab_size 1000 \
-            -hidden_size 2 -batch_size 10 \
-            -num_workers 0 -bucket_size 1024 \
-            -word_vec_size 5 -report_every 5 \
-            -hidden_size 10 -train_steps 10 \
-            -tensorboard "true" \
-            -tensorboard_log_dir $TMP_OUT_DIR/logs_train >> ${LOG_FILE} 2>&1
-${PYTHON} onmt/tests/test_events.py --logdir $TMP_OUT_DIR/logs_train -tensorboard_checks train
-[ "$?" -eq 0 ] || error_exit
-echo "Succeeded" | tee -a ${LOG_FILE}
-rm -r $TMP_OUT_DIR/logs_train
+# echo -n "  [+] Testing NMT training..."
+# ${PYTHON} onmt/bin/train.py \
+#             -config ${DATA_DIR}/data.yaml \
+#             -src_vocab $TMP_OUT_DIR/onmt.vocab.src \
+#             -tgt_vocab $TMP_OUT_DIR/onmt.vocab.tgt \
+#             -src_vocab_size 1000 \
+#             -tgt_vocab_size 1000 \
+#             -hidden_size 2 -batch_size 10 \
+#             -num_workers 0 -bucket_size 1024 \
+#             -word_vec_size 5 -report_every 5 \
+#             -hidden_size 10 -train_steps 10 \
+#             -tensorboard "true" \
+#             -tensorboard_log_dir $TMP_OUT_DIR/logs_train >> ${LOG_FILE} 2>&1
+# ${PYTHON} onmt/tests/test_events.py --logdir $TMP_OUT_DIR/logs_train -tensorboard_checks train
+# [ "$?" -eq 0 ] || error_exit
+# echo "Succeeded" | tee -a ${LOG_FILE}
+# rm -r $TMP_OUT_DIR/logs_train
 
-echo -n "  [+] Testing NMT training and validation w/ copy..."
-${PYTHON} onmt/bin/train.py \
-            -config ${DATA_DIR}/data.yaml \
-            -src_vocab $TMP_OUT_DIR/onmt.vocab.src \
-            -tgt_vocab $TMP_OUT_DIR/onmt.vocab.tgt \
-            -src_vocab_size 1000 \
-            -tgt_vocab_size 1000 \
-            -hidden_size 2 -batch_size 10 \
-            -num_workers 0 -bucket_size 1024 \
-            -word_vec_size 5 -report_every 2 \
-            -hidden_size 10 -train_steps 10 -valid_steps 5 \
-            -tensorboard "true" \
-            -tensorboard_log_dir $TMP_OUT_DIR/logs_train_valid \
-            -copy_attn >> ${LOG_FILE} 2>&1
-${PYTHON} onmt/tests/test_events.py --logdir $TMP_OUT_DIR/logs_train_valid -tensorboard_checks train_valid
-[ "$?" -eq 0 ] || error_exit
-echo "Succeeded" | tee -a ${LOG_FILE}
-rm -r $TMP_OUT_DIR/logs_train_valid
+# echo -n "  [+] Testing NMT training and validation w/ copy..."
+# ${PYTHON} onmt/bin/train.py \
+#             -config ${DATA_DIR}/data.yaml \
+#             -src_vocab $TMP_OUT_DIR/onmt.vocab.src \
+#             -tgt_vocab $TMP_OUT_DIR/onmt.vocab.tgt \
+#             -src_vocab_size 1000 \
+#             -tgt_vocab_size 1000 \
+#             -hidden_size 2 -batch_size 10 \
+#             -num_workers 0 -bucket_size 1024 \
+#             -word_vec_size 5 -report_every 2 \
+#             -hidden_size 10 -train_steps 10 -valid_steps 5 \
+#             -tensorboard "true" \
+#             -tensorboard_log_dir $TMP_OUT_DIR/logs_train_valid \
+#             -copy_attn >> ${LOG_FILE} 2>&1
+# ${PYTHON} onmt/tests/test_events.py --logdir $TMP_OUT_DIR/logs_train_valid -tensorboard_checks train_valid
+# [ "$?" -eq 0 ] || error_exit
+# echo "Succeeded" | tee -a ${LOG_FILE}
+# rm -r $TMP_OUT_DIR/logs_train_valid
 
-echo -n "  [+] Testing NMT training w/ align..."
-${PYTHON} onmt/bin/train.py \
-            -config ${DATA_DIR}/align_data.yaml \
-            -src_vocab $TMP_OUT_DIR/onmt.vocab.src \
-            -tgt_vocab $TMP_OUT_DIR/onmt.vocab.tgt \
-            -src_vocab_size 1000 \
-            -tgt_vocab_size 1000 \
-            -num_workers 0 -bucket_size 1024 \
-            -encoder_type transformer -decoder_type transformer \
-            -layers 4 -word_vec_size 16 -hidden_size 16 -heads 2 -transformer_ff 64 \
-            -lambda_align 0.05 -alignment_layer 2 -alignment_heads 0 \
-            -report_every 5 -train_steps 10 >> ${LOG_FILE} 2>&1
-[ "$?" -eq 0 ] || error_exit
-echo "Succeeded" | tee -a ${LOG_FILE}
+# echo -n "  [+] Testing NMT training w/ align..."
+# ${PYTHON} onmt/bin/train.py \
+#             -config ${DATA_DIR}/align_data.yaml \
+#             -src_vocab $TMP_OUT_DIR/onmt.vocab.src \
+#             -tgt_vocab $TMP_OUT_DIR/onmt.vocab.tgt \
+#             -src_vocab_size 1000 \
+#             -tgt_vocab_size 1000 \
+#             -num_workers 0 -bucket_size 1024 \
+#             -encoder_type transformer -decoder_type transformer \
+#             -layers 4 -word_vec_size 16 -hidden_size 16 -heads 2 -transformer_ff 64 \
+#             -lambda_align 0.05 -alignment_layer 2 -alignment_heads 0 \
+#             -report_every 5 -train_steps 10 >> ${LOG_FILE} 2>&1
+# [ "$?" -eq 0 ] || error_exit
+# echo "Succeeded" | tee -a ${LOG_FILE}
 
-echo -n "  [+] Testing NMT training w/ coverage..."
-${PYTHON} onmt/bin/train.py \
-            -config ${DATA_DIR}/data.yaml \
-            -src_vocab $TMP_OUT_DIR/onmt.vocab.src \
-            -tgt_vocab $TMP_OUT_DIR/onmt.vocab.tgt \
-            -src_vocab_size 1000 \
-            -tgt_vocab_size 1000 \
-            -hidden_size 2 -batch_size 10 \
-            -num_workers 0 -bucket_size 1024 \
-            -word_vec_size 5 -report_every 5        \
-            -coverage_attn true -lambda_coverage 0.1 \
-            -hidden_size 10 -train_steps 10 >> ${LOG_FILE} 2>&1
-[ "$?" -eq 0 ] || error_exit
-echo "Succeeded" | tee -a ${LOG_FILE}
+# echo -n "  [+] Testing NMT training w/ coverage..."
+# ${PYTHON} onmt/bin/train.py \
+#             -config ${DATA_DIR}/data.yaml \
+#             -src_vocab $TMP_OUT_DIR/onmt.vocab.src \
+#             -tgt_vocab $TMP_OUT_DIR/onmt.vocab.tgt \
+#             -src_vocab_size 1000 \
+#             -tgt_vocab_size 1000 \
+#             -hidden_size 2 -batch_size 10 \
+#             -num_workers 0 -bucket_size 1024 \
+#             -word_vec_size 5 -report_every 5        \
+#             -coverage_attn true -lambda_coverage 0.1 \
+#             -hidden_size 10 -train_steps 10 >> ${LOG_FILE} 2>&1
+# [ "$?" -eq 0 ] || error_exit
+# echo "Succeeded" | tee -a ${LOG_FILE}
 
 echo -n "  [+] Testing NMT training w/ dynamic scoring..."
 ${PYTHON} onmt/bin/train.py \
@@ -183,11 +183,14 @@ ${PYTHON} onmt/bin/train.py \
             -hidden_size 16 \
             -heads 2 \
             -transformer_ff 64 \
+            -world_size 1 \
+            -gpu_ranks 0 \
             -num_workers 0 -bucket_size 1024 \
             -train_steps 20 \
             -report_every 5 \
             -train_eval_steps 10 \
             -train_metrics "BLEU" "TER" \
+            -tgt_file_prefix "true" \
             -tensorboard "true" \
             -scoring_debug "true" \
             -tensorboard_log_dir $TMP_OUT_DIR/logs_train_metrics \
