@@ -132,6 +132,7 @@ class Inference(object):
         logger=None,
         seed=-1,
         with_score=False,
+        infer_opt=None,
     ):
         self.model = model
         self.vocabs = vocabs
@@ -202,6 +203,7 @@ class Inference(object):
 
         set_random_seed(seed, self._use_cuda)
         self.with_score = with_score
+        self.infer_opt = infer_opt
 
     @classmethod
     def from_opt(
@@ -268,6 +270,7 @@ class Inference(object):
             logger=logger,
             seed=opt.seed,
             with_score=opt.with_score,
+            infer_opt=opt,
         )
 
     def _log(self, msg):
