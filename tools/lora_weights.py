@@ -55,13 +55,16 @@ if __name__ == "__main__":
 
     base_checkpoint = load_checkpoint(opt.base_model)
 
-    lora_checkpoint = load_checkpoint(opt.lora_weights)
+    # lora_checkpoint = load_checkpoint(opt.lora_weights)
+    lora_checkpoint = load_checkpoint(opt.lora_weights + '_device_0.pt')
+        # "finetuning/llama-2-7B_finetuned_step_3_device_0.pt")
 
     vocabs = dict_to_vocabs(lora_checkpoint["vocab"])
 
     lora_opt = lora_checkpoint["opt"]
 
     lora_opt.quant_layers = []  # we need to remove any quantization to merge weights
+
 
     model = build_base_model(lora_opt, vocabs)
 
@@ -85,10 +88,11 @@ if __name__ == "__main__":
 
     if "model" in lora_checkpoint.keys():
         model.load_state_dict(
-            lora_checkpoint,
+            opt.lora_weights, # lora_checkpoint,
             precision=torch.float32,
             device=torch.device("cpu"),
             strict=False,
+            partial_tensors = True
         )
     else:
         lorapath = (

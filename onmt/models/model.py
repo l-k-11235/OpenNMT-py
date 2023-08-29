@@ -52,6 +52,7 @@ class BaseModel(nn.Module):
         device=torch.device("cpu"),
         strict=True,
         device_id=0,
+        partial_tensors=False
     ):
         """Custom state_dict loading to enable moving module on device as they are loaded
 
@@ -65,91 +66,100 @@ class BaseModel(nn.Module):
         # bitsandbytes quantize weights when .cuda() is called
         # for huge models we need to save Ram
         # so we load the weights  module by module and transfer them to GPU for quantization
-        buf_list = []
-        for name, module in self.named_modules():
-            for buf_name, buf in module.named_buffers():
-                buf_list.append(buf_name)
-                if len(buf_name.split(".")) == 1:  # only last key
-                    if precision == torch.int8:
-                        torch.quantization.quantize_dynamic(module, inplace=True)
-                    else:
-                        module.to(precision)
-                    module.to(device)
-            for param_name, param in module.named_parameters():
-                if len(param_name.split(".")) == 1:  # only last key
-                    if name + "." + param_name in checkpoint["model"].keys():
-                        ckpt_t = checkpoint["model"][name + "." + param_name]
-
-                        if name.split(".")[-1] in [
-                            "linear_keys",
-                            "linear_values",
-                            "linear_query",
-                            "w_1",
-                            "w_3",
-                        ]:
-                            col_slice_start = param.data.size(0) * device_id
-                            col_slice_end = param.data.size(0) * (device_id + 1)
+        
+        if partial_tensors:
+            print('# Concatenation of partial tensors')
+            from onmt.models.model_saver import load_checkpoint
+            
+            # shards containing the partial tensors to be concatenated
+            # all the checkpoints contain all the tensors
+            # the tensors are splitted between the different checkpoints
+            shards = glob.glob(checkpoint + "*.pt")
+            print(shards)
+            if len(shards) == 0:
+                raise ValueError("No partial checkpoints found")
+            f = [] # load safe tensors from shards
+            keys_shard = {}
+            for i, shard in enumerate(shards):
+                f.append(load_checkpoint(shard))
+            checkpoint = f[0]
+            print("####")
+            print(len(f))
+            buf_list = []
+            for name, module in self.named_modules():
+                for buf_name, buf in module.named_buffers():
+                    buf_list.append(buf_name)
+                    if len(buf_name.split(".")) == 1:  # only last key
+                        if precision == torch.int8:
+                            torch.quantization.quantize_dynamic(module, inplace=True)
                         else:
-                            col_slice_start = 0
-                            col_slice_end = param.data.size(0)
-                        if param.data.dim() == 2:
-                            if name.split(".")[-1] in ["final_linear", "w_2"]:
-                                row_slice_start = param.data.size(1) * device_id
-                                row_slice_end = param.data.size(1) * (device_id + 1)
-                            else:
-                                row_slice_start = 0
-                                row_slice_end = param.data.size(1)
-                            assert (
-                                param.data.size()
-                                == ckpt_t[
-                                    col_slice_start:col_slice_end,
-                                    row_slice_start:row_slice_end,
-                                ].size()
-                            ), "An error in model's partition and checkpoint's slice was detected"
-                            param.data = ckpt_t[
-                                col_slice_start:col_slice_end,
-                                row_slice_start:row_slice_end,
-                            ]
+                            module.to(precision)
+                        module.to(device)
+                for param_name, param in module.named_parameters():
+                    if len(param_name.split(".")) == 1:  # only last key
+                        if name + "." + param_name in checkpoint["model"].keys(): 
+                            ckpt_t = {} 
+                            ckpt_concat = None    
+                            for i, checkpoint in enumerate(f):      
+                                ckpt_t[i] = checkpoint["model"][name + "." + param_name]
+                            # print(name + "." + param_name, param.data.dim(), param.data.size())
+                            # print(len(ckpt_t))
+                            if name.split(".")[-1] in [
+                                "linear_keys",
+                                "linear_values",
+                                "linear_query",
+                                "w_1",
+                                "w_3",
+                            ]:
+                                # concat on columns
+                                print('concat on cols',  name + "." + param_name)
+                                for i, _ckpt_t in ckpt_t.items():
+                                    print(i, type(_ckpt_t), _ckpt_t.size())
+                                ckpt_concat = torch.cat([_ckpt_t for i, _ckpt_t in ckpt_t.items()], 0)
+                                # print(ckpt_t_concat.size())
+                    
+                            if param.data.dim() == 2:
+                                if name.split(".")[-1] in ["final_linear", "w_2"]:
+                                    print('concat on rows', name + "." + param_name)
+                                    for i, _ckpt_t in ckpt_t.items():
+                                        print(i, type(_ckpt_t), _ckpt_t.size())
+                                    ckpt_concat = torch.cat([_ckpt_t for i, _ckpt_t in ckpt_t.items()], 1)
+                                    # print(ckpt_t.size())
+                            if ckpt_concat is not None:
+                                param.data = ckpt_concat
+                            print("#  param.data.size: ", param.data.size())
+                            del checkpoint["model"][name + "." + param_name]
+                        elif (
+                            "generator" in checkpoint.keys()
+                            and name == "generator"
+                            and checkpoint["generator"] is not None
+                            and param_name in checkpoint["generator"].keys()
+                        ):
+                            param.data = checkpoint["generator"][param_name]
+                            del checkpoint["generator"][param_name]
+                        elif strict and "lora" not in param_name:
+                            raise ValueError(
+                                "Missing key in checkpoint: %s" % name + "." + param_name
+                            )
+                        if precision == torch.int8:
+                            torch.quantization.quantize_dynamic(module, inplace=True)
                         else:
-                            assert (
-                                param.data.size()
-                                == ckpt_t[col_slice_start:col_slice_end].size()
-                            ), "An error in model's partition and checkpoint's slice was detected"
-                            param.data = ckpt_t[col_slice_start:col_slice_end]
-
-                        del checkpoint["model"][name + "." + param_name]
-                    elif (
-                        "generator" in checkpoint.keys()
-                        and name == "generator"
-                        and checkpoint["generator"] is not None
-                        and param_name in checkpoint["generator"].keys()
-                    ):
-                        param.data = checkpoint["generator"][param_name]
-                        del checkpoint["generator"][param_name]
-                    elif strict and "lora" not in param_name:
-                        raise ValueError(
-                            "Missing key in checkpoint: %s" % name + "." + param_name
-                        )
-                    if precision == torch.int8:
-                        torch.quantization.quantize_dynamic(module, inplace=True)
-                    else:
-                        module.to(precision)
-                    module.to(device)
-        for key in checkpoint[
-            "model"
-        ].keys():  # if some keys are left in checkpoint after deletion
-            if key not in buf_list:
-                raise ValueError(
-                    "Extra keys in model state_dict do not match the model config %s"
-                    % checkpoint["model"].keys()
-                )
-        if checkpoint["generator"]:
-            for key in checkpoint["generator"].keys():
+                            module.to(precision)
+                        module.to(device)
+    
+            for key in checkpoint["model"].keys():  # if some keys are left in checkpoint after deletion
                 if key not in buf_list:
                     raise ValueError(
-                        "Extra keys in generator state_dict do not match the model config %s"
-                        % checkpoint["generator"].keys()
+                        "Extra keys in model state_dict do not match the model config %s"
+                        % checkpoint["model"].keys()
                     )
+            if checkpoint["generator"]:
+                for key in checkpoint["generator"].keys():
+                    if key not in buf_list:
+                        raise ValueError(
+                            "Extra keys in generator state_dict do not match the model config %s"
+                            % checkpoint["generator"].keys()
+                        )
 
     def load_safe_state_dict(
         self,
@@ -176,9 +186,13 @@ class BaseModel(nn.Module):
             raise ImportError("run: pip install safetensors, to use safetensors")
         keyfound = {}
         shards = glob.glob(model_path + ".*.safetensors")
+        print(shards)
+        # Les shards doivent être splittées sur les différents devices
+        # Pour l'instant les shards doivent contenir des tensors entiers
+        # Il faut adapter au cas où les tensors sont partiels
         if len(shards) == 0:
             raise ValueError("No safetensors file found")
-        f = []
+        f = [] # load safe tensors from shards
         keys_shard = {}
         for i, shard in enumerate(shards):
             f.append(safetensors.safe_open(shard, framework="pt", device="cpu"))
