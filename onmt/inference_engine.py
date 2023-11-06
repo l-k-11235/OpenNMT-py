@@ -1,4 +1,5 @@
 import json
+import numpy as np
 from onmt.constants import CorpusTask, DefaultTokens, ModelTask
 from onmt.inputters.dynamic_iterator import build_dynamic_dataset_iter
 from onmt.utils.distributed import ErrorHandler, spawned_infer
@@ -52,6 +53,25 @@ class InferenceEngine(object):
         else:
             scores, preds = self.infer_list_parallel(src)
         return scores, preds
+
+    def score_list(self, src, tgt):
+        """List of strings inference `src`"""
+        print("score_list")
+        print(len(src), len(tgt))
+        if self.opt.world_size <= 1:
+            infer_iter = build_dynamic_dataset_iter(
+                self.opt,
+                self.transforms_cls,
+                self.vocabs,
+                task=CorpusTask.INFER,
+                src=src,
+                tgt=tgt,
+                device_id=self.device_id,
+            )
+            scored_bucket = self.score(infer_iter)
+            score_results = [scored_bucket[i] for i, _ in enumerate(scored_bucket)]
+        print(len(scored_bucket))
+        return score_results
 
     def infer_file_parallel(self):
         """File inference in mulitprocessing with partitioned models."""
@@ -120,14 +140,47 @@ class InferenceEnginePY(InferenceEngine):
             self.translator = build_translator(
                 opt, self.device_id, logger=logger, report_score=True
             )
-            self.transforms_cls = get_transforms_cls(opt._all_transform)
             self.vocabs = self.translator.vocabs
+            self.transforms_cls = get_transforms_cls(opt._all_transform)
+            transforms = make_transforms(opt, self.transforms_cls, self.vocabs)
+            self.transform = TransformPipe.build_from(transforms.values())
 
     def _translate(self, infer_iter):
         scores, preds = self.translator._translate(
             infer_iter, infer_iter.transforms, self.opt.attn_debug, self.opt.align_debug
         )
         return scores, preds
+
+    def score(self, infer_iter):
+        self.translator.with_scores = True
+        scored_bucket = {}
+        for batch, bucket_idx in infer_iter:
+            batch_data = self.translator.translate_batch(batch, attn_debug=False)
+            import pickle
+            with open('batch.pickle', 'wb') as handle:
+                pickle.dump(batch, handle, protocol=pickle.HIGHEST_PROTOCOL)
+            batch_scores = [_score[0].cpu().tolist() for _score in batch_data['scores']]
+            batch_inds_in_bucket = batch['ind_in_bucket'].cpu().tolist()
+            src_lengths = batch['srclen'].cpu().tolist()
+            batch_tgts = []
+            batch = batch_data['batch']
+            for i, _ in enumerate(batch['src']):
+                tok_ids = batch["tgt"][i, :, 0].cpu().numpy().tolist()
+                tokens = [
+                    self.vocabs["src"].lookup_index(id)
+                    for id in tok_ids
+                    if id != self.vocabs["src"].lookup_token(DefaultTokens.PAD)
+                ]
+                batch_ppls = [np.exp(- _score / (src_lengths[i] + len(tokens)))
+                              for _score in batch_scores]
+                batch_tgts.append(self.transform.apply_reverse(tokens))
+                ind_in_bucket = batch_inds_in_bucket[i]
+                scored_bucket[ind_in_bucket] = {
+                    'score': batch_scores[i],
+                    'ppl': batch_ppls[i],
+                    'tgt': batch_tgts[i]
+                }
+        return scored_bucket
 
     def infer_file_parallel(self):
         assert self.opt.world_size > 1, "World size must be greater than 1."
@@ -260,3 +313,37 @@ class InferenceEngineCT2(InferenceEngine):
             scores += _scores
             preds += _preds
         return scores, preds
+
+    def score(self, infer_iter):
+        scored_bucket = {}
+        for batch, bucket_idx in infer_iter:
+            batch_inds_in_bucket = batch['ind_in_bucket'].cpu().tolist()
+            batch_tgts = []
+            input_tokens = []
+            for i, _ in enumerate(batch['src']):
+                src_tok_ids = batch["src"][i, :, 0].cpu().numpy().tolist()
+                tgt_tok_ids = batch["tgt"][i, :, 0].cpu().numpy().tolist()
+                tgt_tokens = [
+                    self.vocabs["src"].lookup_index(id)
+                    for id in tgt_tok_ids
+                    if id != self.vocabs["src"].lookup_token(DefaultTokens.PAD)
+                ]
+                src_tokens = [self.vocabs["src"].lookup_index(id)
+                              for id in src_tok_ids
+                              if id != self.vocabs["src"].lookup_token(DefaultTokens.PAD)]
+                tgt_tokens = [self.vocabs["src"].lookup_index(id)
+                              for id in tgt_tok_ids
+                              if id != self.vocabs["src"].lookup_token(DefaultTokens.PAD)]
+                input_tokens.append(src_tokens + tgt_tokens)
+                batch_tgts.append(self.transform.apply_reverse(tgt_tokens))
+            batch_outputs = self.translator.score_batch(input_tokens)
+            for j, out in enumerate(batch_outputs):
+                score = sum(out.log_probs)
+                ppl = np.exp(-np.mean(out.log_probs))
+                ind_in_bucket = batch_inds_in_bucket[j]
+                scored_bucket[ind_in_bucket] = {
+                    'ppl': ppl,
+                    'score': score,
+                    'tgt': batch_tgts[j]
+                }
+        return scored_bucket
