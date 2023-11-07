@@ -33,10 +33,14 @@ class InferenceEngine(object):
                 task=CorpusTask.INFER,
                 device_id=self.device_id,
             )
-            scores, preds = self._translate(infer_iter)
-        else:
-            scores, preds = self.infer_file_parallel()
-        return scores, preds
+            translated_bucket = self._translate(infer_iter)
+            translated_results = [
+                translated_bucket[i] for i in range(len(translated_bucket))
+            ]
+            return translated_results
+        # else:
+        #     scores, preds = self.infer_file_parallel()
+        # return scores, preds
 
     def infer_list(self, src):
         """List of strings inference `src`"""
@@ -57,7 +61,6 @@ class InferenceEngine(object):
             ]
             print(len(translated_results))
             return translated_results
-        #     # scores, preds = self._translate(infer_iter)
         # else:
         #     scores, preds = self.infer_list_parallel(src)
         # return scores, preds
@@ -351,19 +354,22 @@ class InferenceEngineCT2(InferenceEngine):
         return scores, preds
 
     def _translate(self, infer_iter):
-        scores = []
-        preds = []
+        translated_bucket = {}
         for batch, bucket_idx in infer_iter:
-            _scores, _preds = self.translate_batch(batch, self.opt)
-            scores += _scores
-            preds += _preds
-        return scores, preds
+            batch_inds_in_bucket = batch["ind_in_bucket"].cpu().tolist()
+            batch_scores, batch_preds = self.translate_batch(batch, self.opt)
+            for i, _ in enumerate(batch["src"]):
+                ind_in_bucket = batch_inds_in_bucket[i]
+                translated_bucket[ind_in_bucket] = {
+                    "scores": batch_scores[i],
+                    "preds": batch_preds[i],
+                }
+        return translated_bucket
 
     def score(self, infer_iter):
         scored_bucket = {}
         for batch, bucket_idx in infer_iter:
             batch_inds_in_bucket = batch["ind_in_bucket"].cpu().tolist()
-            batch_tgts = []
             input_tokens = []
             for i, _ in enumerate(batch["src"]):
                 src_tok_ids = batch["src"][i, :, 0].cpu().numpy().tolist()
@@ -384,7 +390,6 @@ class InferenceEngineCT2(InferenceEngine):
                     if id != self.vocabs["src"].lookup_token(DefaultTokens.PAD)
                 ]
                 input_tokens.append(src_tokens + tgt_tokens)
-                batch_tgts.append(self.transform.apply_reverse(tgt_tokens))
             batch_outputs = self.translator.score_batch(input_tokens)
             for j, out in enumerate(batch_outputs):
                 score = sum(out.log_probs)
@@ -393,6 +398,5 @@ class InferenceEngineCT2(InferenceEngine):
                 scored_bucket[ind_in_bucket] = {
                     "ppl": ppl,
                     "score": score,
-                    "tgt": batch_tgts[j],
                 }
         return scored_bucket
