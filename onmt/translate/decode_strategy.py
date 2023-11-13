@@ -113,6 +113,8 @@ class DecodeStrategy(object):
 
         self.done = False
 
+        self.prefix_non_pad = None
+
     def get_device_from_enc_out(self, enc_out):
         if isinstance(enc_out, tuple):
             mb_device = enc_out[0].device
@@ -169,14 +171,14 @@ class DecodeStrategy(object):
                 batch_size == self.batch_size * self.parallel_paths
             ), "forced target_prefix should've extend to same number of path!"
             target_prefix_words = target_prefix[:, :, 0]  # no features
-            target_prefix = target_prefix_words[:, 1:]  # remove bos
+            target_prefix = target_prefix_words[:, :]  # DO NOT remove bos
 
             # fix length constraint and remove eos from count
             prefix_non_pad = target_prefix.ne(self.pad).sum(dim=-1).tolist()
             self.max_length += max(prefix_non_pad) - 1
             self.min_length += min(prefix_non_pad) - 1
-
         self.target_prefix = target_prefix  # NOTE: forced prefix words
+        self.prefix_non_pad = prefix_non_pad
         return None, enc_out, src_len, src_map
 
     def __len__(self):

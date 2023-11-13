@@ -66,7 +66,7 @@ class Inference(object):
     """Translate a batch of sentences with a saved model.
 
     Args:
-        model (onmt.modules.NMTModel): NMT model to use for translation
+        model (onmt.models.NMTModel): NMT model to use for translation
         vocabs (dict[str, Vocab]): A dict
             mapping each side's Vocab.
         gpu (int): GPU device. Set to negative for no GPU.
@@ -1113,7 +1113,6 @@ class GeneratorLM(Inference):
             src_map,
             target_prefix=target_prefix,
         )
-
         # (4) Begin decoding step by step:
         for step in range(decode_strategy.max_length):
             decoder_input = (
@@ -1156,8 +1155,7 @@ class GeneratorLM(Inference):
             if parallel_paths > 1 or any_finished:
                 # select indexes in model state/cache
                 self.model.decoder.map_state(lambda state, dim: state[select_indices])
-
-        return self.report_results(
+        results = self.report_results(
             gold_score,
             batch,
             batch_size,
@@ -1166,6 +1164,16 @@ class GeneratorLM(Inference):
             use_src_map,
             decode_strategy,
         )
+        if decode_strategy.prefix_non_pad is not None:
+            # truncate predictions
+            predictions = results['predictions']
+
+            for i, _ in enumerate(predictions):
+                for j, _ in enumerate(predictions[i]):
+                    predictions[i][j] = predictions[i][j][decode_strategy.prefix_non_pad[i]:]
+            results['predictions'] = predictions
+
+        return results
 
     def _score_target(self, batch, enc_out, src_len, src_map):
         src = batch["src"]
