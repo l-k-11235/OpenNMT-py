@@ -1166,12 +1166,14 @@ class GeneratorLM(Inference):
         )
         if decode_strategy.prefix_non_pad is not None:
             # truncate predictions
-            predictions = results['predictions']
+            predictions = results["predictions"]
 
             for i, _ in enumerate(predictions):
                 for j, _ in enumerate(predictions[i]):
-                    predictions[i][j] = predictions[i][j][decode_strategy.prefix_non_pad[i]:]
-            results['predictions'] = predictions
+                    predictions[i][j] = predictions[i][j][
+                        decode_strategy.prefix_non_pad[i] :
+                    ]
+            results["predictions"] = predictions
 
         return results
 
