@@ -141,7 +141,13 @@ class DecodeStrategy(object):
         return fn_map_state, enc_out, src_map, target_prefix
 
     def initialize(
-        self, enc_out, src_len, src_map=None, device=None, target_prefix=None
+        self,
+        enc_out,
+        src_len,
+        src_map=None,
+        device=None,
+        target_prefix=None,
+        prefix_non_pad=None,
     ):
         """DecodeStrategy subclasses should override :func:`initialize()`.
 
@@ -164,7 +170,7 @@ class DecodeStrategy(object):
         self.is_finished_list = [
             [False for _ in range(self.parallel_paths)] for _ in range(self.batch_size)
         ]
-
+        prefix_non_pad = None
         if target_prefix is not None:
             batch_size, seq_len, n_feats = target_prefix.size()
             assert (
