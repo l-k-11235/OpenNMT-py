@@ -331,7 +331,6 @@ class TransformerDecoderLayer(TransformerDecoderLayerBase):
             # 1 = heads to be expanded in MHA
 
         norm_layer_in = self.layer_norm_1(layer_in)
-
         self_attn, _ = self._forward_self_attn(
             norm_layer_in, dec_mask, step, return_attn=return_attn
         )
@@ -683,7 +682,7 @@ class TransformerLMDecoderLayer(TransformerDecoderLayerBase):
         """
         dec_mask = None
 
-        if layer_in.size(1) > 1:
+        if layer_in.size(1) > 1 and (tgt_pad_mask is not None):
             # masking is necessary when sequence length is greater than one
             dec_mask = self._compute_dec_mask(tgt_pad_mask, future)
             dec_mask = dec_mask.unsqueeze(1)
@@ -817,9 +816,6 @@ class TransformerLMDecoder(TransformerDecoderBase):
 
         assert dec_out.dim() == 3  # batch x len x embedding_dim
 
-        pad_idx = self.embeddings.word_padding_idx
-        tgt_pad_mask = tgt[:, :, 0].eq(pad_idx).unsqueeze(1)  # [B, 1, T_tgt]
-
         with_align = kwargs.pop("with_align", False)
         return_attn = kwargs.pop("return_attn", False)
         return_attn = with_align or self._copy or return_attn
@@ -828,7 +824,7 @@ class TransformerLMDecoder(TransformerDecoderBase):
         for layer in self.transformer_layers:
             dec_out, attn, _ = layer(
                 dec_out,
-                tgt_pad_mask,
+                tgt_pad_mask=None,
                 step=step,
                 with_align=with_align,
                 return_attn=return_attn,

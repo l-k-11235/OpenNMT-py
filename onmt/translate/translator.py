@@ -1091,7 +1091,7 @@ class GeneratorLM(Inference):
         src = batch["src"]
         src_len = batch["srclen"]
 
-        src, src_len, target_prefix = self.split_src_to_prevent_padding(src, src_len)
+        target_prefix = None
 
         # (2) init decoder
         self.model.decoder.init_state(src, None, None)
@@ -1164,17 +1164,6 @@ class GeneratorLM(Inference):
             use_src_map,
             decode_strategy,
         )
-        if decode_strategy.prefix_non_pad is not None:
-            # truncate predictions
-            predictions = results["predictions"]
-
-            for i, _ in enumerate(predictions):
-                for j, _ in enumerate(predictions[i]):
-                    predictions[i][j] = predictions[i][j][
-                        decode_strategy.prefix_non_pad[i] :
-                    ]
-            results["predictions"] = predictions
-
         return results
 
     def _score_target(self, batch, enc_out, src_len, src_map):

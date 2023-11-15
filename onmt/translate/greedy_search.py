@@ -197,7 +197,6 @@ class GreedySearch(DecodeStrategy):
             log_probs (FloatTensor): ``(batch_size, vocab_size)``.
         """
         # maybe fix some prediction at this step by modifying log_probs
-        log_probs = self.target_prefixing(log_probs)
         topk_ids, topk_scores = sample_with_temperature(
             log_probs, self.sampling_temp, self.keep_topk, self.keep_topp
         )

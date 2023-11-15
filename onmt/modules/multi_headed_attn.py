@@ -469,7 +469,7 @@ class MultiHeadedAttention(torch.nn.Module):
             and not return_attn
             and query.device != torch.device("cpu")
         ):
-            causal = self.is_decoder and self.attn_type == "self" and mask is not None
+            causal = self.is_decoder and self.attn_type == "self"
             if self.is_decoder and self.attn_type == "self" and flash2:
                 if causal:
                     window_size = (
