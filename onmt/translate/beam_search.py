@@ -171,7 +171,6 @@ class BeamSearchBase(DecodeStrategy):
         """
         vocab_size = log_probs.size(-1)
         # maybe fix some prediction at this step by modifying log_probs
-        log_probs = self.target_prefixing(log_probs)
 
         # Flatten probs into a list of possibilities.
         curr_scores = log_probs.reshape(-1, self.beam_size * vocab_size)
