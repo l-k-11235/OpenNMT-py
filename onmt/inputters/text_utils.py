@@ -212,7 +212,9 @@ def tensorify(vocabs, minibatch, device):
                 for ex, indice in minibatch
             ]
             padidx = vocabs["src_feats"][feat_id][DefaultTokens.PAD]
-            reversed_tbatchfeat = [[i].flip(dims=[0]) for i, _ in enumerate(tbatchfeat)]
+            reversed_tbatchfeat = [
+                tbatchfeat[i].flip(dims=[0]) for i, _ in enumerate(tbatchfeat)
+            ]
             tbatchfeat = pad_sequence(
                 reversed_tbatchfeat, batch_first=True, padding_value=padidx
             ).flip(dims=[1])
