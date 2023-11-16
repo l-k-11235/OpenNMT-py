@@ -171,19 +171,7 @@ class DecodeStrategy(object):
             [False for _ in range(self.parallel_paths)] for _ in range(self.batch_size)
         ]
         prefix_non_pad = None
-        if target_prefix is not None:
-            batch_size, seq_len, n_feats = target_prefix.size()
-            assert (
-                batch_size == self.batch_size * self.parallel_paths
-            ), "forced target_prefix should've extend to same number of path!"
-            target_prefix_words = target_prefix[:, :, 0]  # no features
-            target_prefix = target_prefix_words[:, :]  # DO NOT remove bos
-
-            # fix length constraint and remove eos from count
-            prefix_non_pad = target_prefix.ne(self.pad).sum(dim=-1).tolist()
-            self.max_length += max(prefix_non_pad) - 1
-            self.min_length += min(prefix_non_pad) - 1
-        self.target_prefix = target_prefix  # NOTE: forced prefix words
+        self.target_prefix = target_prefix
         self.prefix_non_pad = prefix_non_pad
         return None, enc_out, src_len, src_map
 

@@ -806,7 +806,7 @@ class Translator(Inference):
     def translate_batch(self, batch, attn_debug):
         """Translate a batch of sentences."""
         with torch.no_grad():
-            if self.sample_from_topk != 0 or self.sample_from_topp != 0:
+            if self.sample_from_topk != 0 or self.sample_from_topk != 0:
                 decode_strategy = GreedySearch(
                     pad=self._tgt_pad_idx,
                     bos=self._tgt_bos_idx,
@@ -848,6 +848,7 @@ class Translator(Inference):
                     ratio=self.ratio,
                     ban_unk_token=self.ban_unk_token,
                 )
+            print("## decode_strategy:", decode_strategy)
             return self._translate_batch_with_strategy(batch, decode_strategy)
 
     def _run_encoder(self, batch):
@@ -1053,16 +1054,6 @@ class GeneratorLM(Inference):
                     ban_unk_token=self.ban_unk_token,
                 )
             return self._translate_batch_with_strategy(batch, decode_strategy)
-
-    @classmethod
-    def split_src_to_prevent_padding(cls, src, src_len):
-        min_len_batch = torch.min(src_len).item()
-        target_prefix = None
-        if min_len_batch > 0 and min_len_batch < src.size(1):
-            target_prefix = src[:, min_len_batch:, :]
-            src = src[:, :min_len_batch, :]
-            src_len[:] = min_len_batch
-        return src, src_len, target_prefix
 
     def tile_to_beam_size_after_initial_step(self, fn_map_state, log_probs):
         if fn_map_state is not None:
