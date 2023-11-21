@@ -598,3 +598,4 @@ class MultiHeadedAttention(torch.nn.Module):
             all_reduce(attn_output)
 
         return attn_output, attn
+

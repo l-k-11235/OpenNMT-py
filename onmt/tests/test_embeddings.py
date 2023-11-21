@@ -5,7 +5,7 @@ import itertools
 from copy import deepcopy
 
 import torch
-
+from torch.nn.init import xavier_uniform_
 from onmt.tests.utils_for_tests import product_dict
 
 
@@ -137,6 +137,9 @@ class TestEmbeddings(unittest.TestCase):
     def test_embeddings_trainable_params_update(self):
         for params, init_case in itertools.product(self.PARAMS, self.cases()):
             emb = Embeddings(**init_case)
+            for n, p in emb.named_parameters():
+                if "weight" in n and p.dim() > 1:
+                    xavier_uniform_(p)
             trainable_params = {
                 n: p for n, p in emb.named_parameters() if p.requires_grad
             }
@@ -144,7 +147,7 @@ class TestEmbeddings(unittest.TestCase):
                 old_weights = deepcopy(trainable_params)
                 dummy_in = self.dummy_inputs(params, init_case)
                 res = emb(dummy_in)
-                pretend_loss = res.sum()
+                pretend_loss = res.mean()
                 pretend_loss.backward()
                 dummy_optim = torch.optim.SGD(trainable_params.values(), 1)
                 dummy_optim.step()

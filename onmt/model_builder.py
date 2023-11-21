@@ -4,8 +4,9 @@ and creates each encoder and decoder accordingly.
 """
 import torch
 import torch.nn as nn
+from torch.nn.utils import skip_init
 from torch.nn.init import xavier_uniform_, zeros_, uniform_
-import onmt.modules
+from onmt.models.model import NMTModel, LanguageModel
 from onmt.encoders import str2enc
 from onmt.decoders import str2dec
 from onmt.inputters.inputter import dict_to_vocabs
@@ -134,7 +135,7 @@ def load_test_model(opt, device_id=0, model_path=None):
         if opt.gpu >= 0:
             raise ValueError("Dynamic 8-bit quantization is not supported on GPU")
         else:
-            precision = torch.int8
+            precision = torch.float32
 
     logger.info("Loading data into the model")
 
@@ -157,6 +158,10 @@ def load_test_model(opt, device_id=0, model_path=None):
             strict=True,
             offset=offset,
         )
+
+    if opt.precision == torch.int8:
+        torch.quantization.quantize_dynamic(model, dtype=torch.qint8, inplace=True)
+
     del checkpoint
 
     model.eval()
@@ -213,13 +218,13 @@ def build_task_specific_model(model_opt, vocabs):
             share_embeddings=model_opt.share_embeddings,
             src_emb=src_emb,
         )
-        return onmt.models.NMTModel(encoder=encoder, decoder=decoder)
+        return NMTModel(encoder=encoder, decoder=decoder)
     elif model_opt.model_task == ModelTask.LANGUAGE_MODEL:
         src_emb = build_src_emb(model_opt, vocabs)
         decoder, _ = build_decoder_with_embeddings(
             model_opt, vocabs, share_embeddings=True, src_emb=src_emb
         )
-        return onmt.models.LanguageModel(decoder=decoder)
+        return LanguageModel(decoder=decoder)
     else:
         raise ValueError(f"No model defined for {model_opt.model_task} task")
 
@@ -336,7 +341,11 @@ def build_base_model(model_opt, vocabs):
 
     # Build Generator.
     if not model_opt.copy_attn:
-        generator = nn.Linear(model_opt.dec_hid_size, len(vocabs["tgt"]))
+        generator = skip_init(
+            nn.Linear,
+            in_features=model_opt.dec_hid_size,
+            out_features=len(vocabs["tgt"]),
+        )
         if model_opt.share_decoder_embeddings:
             generator.weight = model.decoder.embeddings.word_lut.weight
     else:

@@ -48,10 +48,10 @@ class DecodeStrategy(object):
       alive_seq (LongTensor): Shape ``(B x parallel_paths, step)``.
         This sequence grows in the ``step`` axis on each call to
         :func:``advance()``.
-        is_finished (ByteTensor or NoneType): Shape ``(B, parallel_paths)``.
+      is_finished (ByteTensor or NoneType): Shape ``(B, parallel_paths)``.
         Initialized to ``None``.
       alive_attn (FloatTensor or NoneType): If tensor, shape is
-        ``(step, B x parallel_paths, inp_seq_len)``, where ``inp_seq_len``
+        ``(B x parallel_paths, step, inp_seq_len)``, where ``inp_seq_len``
         is the (max) length of the input sequence.
       target_prefix (LongTensor or NoneType): If tensor, shape is
         ``(B x parallel_paths, prefix_seq_len)``, where ``prefix_seq_len``
@@ -134,10 +134,12 @@ class DecodeStrategy(object):
             src_map = tile(src_map, self.beam_size, dim=0)
 
         self.src_len = tile(src_len, self.beam_size)
+
         if target_prefix is not None:
             target_prefix = tile(target_prefix, self.beam_size, dim=0)
 
         return fn_map_state, enc_out, src_map, target_prefix
+
 
     def initialize(
         self,
@@ -185,25 +187,23 @@ class DecodeStrategy(object):
             self.min_length += min(prefix_non_pad) - 1
 
         self.target_prefix = target_prefix  # NOTE: forced prefix words
-        return None, enc_out, src_len, src_map
+        return None
 
     def __len__(self):
         return self.alive_seq.shape[1]
 
     def ensure_min_length(self, log_probs):
         if len(self) <= self.min_length:
-            log_probs[:, self.eos] = -1e20
+            log_probs[:, self.eos] = -65504  # -1e20
 
     def ensure_unk_removed(self, log_probs):
         if self.ban_unk_token:
-            log_probs[:, self.unk] = -1e20
+            log_probs[:, self.unk] = -65504  # -1e20
 
     def ensure_max_length(self):
         # add one to account for BOS. Don't account for EOS because hitting
         # this implies it hasn't been found.
         if len(self) == self.max_length + 1:
-            if hasattr(self, "is_finished"):
-                self.is_finished.fill_(1)
             self.is_finished_list = [
                 [True for _ in range(self.parallel_paths)]
                 for _ in range(len(self.is_finished_list))
