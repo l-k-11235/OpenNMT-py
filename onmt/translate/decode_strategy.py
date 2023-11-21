@@ -113,6 +113,7 @@ class DecodeStrategy(object):
 
         self.done = False
 
+
     def get_device_from_enc_out(self, enc_out):
         if isinstance(enc_out, tuple):
             mb_device = enc_out[0].device
@@ -139,11 +140,20 @@ class DecodeStrategy(object):
 
         return fn_map_state, enc_out, src_map, target_prefix
 
-    def initialize(self, device=None, target_prefix=None):
+
+    def initialize(
+        self,
+        enc_out,
+        src_len,
+        src_map=None,
+        device=None,
+        target_prefix=None,
+    ):
         """DecodeStrategy subclasses should override :func:`initialize()`.
 
         `initialize` should be called before all actions.
         used to prepare necessary ingredients for decode."""
+        print('## in DecodeStrategy.initialize')
 
         if device is None:
             device = torch.device("cpu")
@@ -163,6 +173,7 @@ class DecodeStrategy(object):
         ]
 
         if target_prefix is not None:
+            print('target_prefix) is not None')
             batch_size, seq_len, n_feats = target_prefix.size()
             assert (
                 batch_size == self.batch_size * self.parallel_paths
@@ -172,7 +183,7 @@ class DecodeStrategy(object):
 
             # fix length constraint and remove eos from count
             prefix_non_pad = target_prefix.ne(self.pad).sum(dim=-1).tolist()
-            self.max_length += max(prefix_non_pad) - 1
+            # self.max_length += max(prefix_non_pad) - 1
             self.min_length += min(prefix_non_pad) - 1
 
         self.target_prefix = target_prefix  # NOTE: forced prefix words
@@ -263,51 +274,6 @@ class DecodeStrategy(object):
             forbidden_tokens[-1][current_ngram[:-1]].add(current_ngram[-1])
 
         self.forbidden_tokens = forbidden_tokens
-
-    def target_prefixing(self, log_probs):
-        """Fix the first part of predictions with `self.target_prefix`.
-
-        Args:
-        log_probs (FloatTensor): logits of size ``(B, vocab_size)``.
-
-        Returns:
-        log_probs (FloatTensor): modified logits in ``(B, vocab_size)``.
-        """
-        _B, vocab_size = log_probs.size()
-        step = len(self)
-        if self.target_prefix is not None and step <= self.target_prefix.size(1):
-            pick_idx = self.target_prefix[:, step - 1].tolist()  # (B)
-            pick_coo = [
-                [path_i, pick]
-                for path_i, pick in enumerate(pick_idx)
-                if pick not in [self.eos, self.pad]
-            ]
-            mask_pathid = [
-                path_i
-                for path_i, pick in enumerate(pick_idx)
-                if pick in [self.eos, self.pad]
-            ]
-            if len(pick_coo) > 0:
-                pick_coo = torch.tensor(pick_coo).to(self.target_prefix)
-                pick_fill_value = torch.ones([pick_coo.size(0)], dtype=log_probs.dtype)
-                # pickups: Tensor where specified index were set to 1, others 0
-                pickups = torch.sparse_coo_tensor(
-                    pick_coo.t(),
-                    pick_fill_value,
-                    size=log_probs.size(),
-                    device=log_probs.device,
-                ).to_dense()
-                # dropdowns: opposite of pickups, 1 for those shouldn't pick
-                dropdowns = torch.ones_like(pickups) - pickups
-                if len(mask_pathid) > 0:
-                    path_mask = torch.zeros(_B).to(self.target_prefix)
-                    path_mask[mask_pathid] = 1
-                    path_mask = path_mask.unsqueeze(1).to(dtype=bool)
-                    dropdowns = dropdowns.masked_fill(path_mask, 0)
-                # Minus dropdowns to log_probs making probabilities of
-                # unspecified index close to 0
-                log_probs -= 10000 * dropdowns
-        return log_probs
 
     def maybe_update_target_prefix(self, select_index):
         """We update / reorder `target_prefix` for alive path."""

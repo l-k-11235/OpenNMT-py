@@ -65,7 +65,7 @@ class Inference(object):
     """Translate a batch of sentences with a saved model.
 
     Args:
-        model (onmt.modules.NMTModel): NMT model to use for translation
+        model (onmt.models.NMTModel): NMT model to use for translation
         vocabs (dict[str, Vocab]): A dict
             mapping each side's Vocab.
         gpu (int): GPU device. Set to negative for no GPU.
@@ -637,6 +637,7 @@ class Inference(object):
         batch_offset=None,
         return_attn=False,
     ):
+        print('## in inference._decode_and_generate')
         if self.copy_attn:
             # Turn any copied words into UNKs.
             decoder_in = decoder_in.masked_fill(
@@ -647,7 +648,6 @@ class Inference(object):
         # and [batch, src_len, hidden] as enc_out
         # in case of inference tgt_len = 1, batch = beam times batch_size
         # in case of Gold Scoring tgt_len = actual length, batch = 1 batch
-
         dec_out, dec_attn = self.model.decoder(
             decoder_in,
             enc_out,
@@ -655,8 +655,11 @@ class Inference(object):
             step=step,
             return_attn=self.global_scorer.has_cov_pen or return_attn,
         )
-
+        print('## dec_out: ', dec_out)
+        print(dec_out.size())
         # Generator forward.
+        print('## self.copy_attn: ', self.copy_attn)
+        print('## type(self.model.generator): ', type(self.model.generator))
         if not self.copy_attn:
             if "std" in dec_attn:
                 attn = dec_attn["std"]
@@ -687,6 +690,7 @@ class Inference(object):
                 batch_dim=0,
             )
             scores = scores.view(-1, decoder_in.size(1), scores.size(-1))
+            print('# scores', scores)
             log_probs = scores.squeeze(1).log()
             # returns [(batch_size x beam_size) , vocab ] when 1 step
             # or [batch_size, tgt_len, vocab ] when full sentence
@@ -793,7 +797,7 @@ class Translator(Inference):
     def translate_batch(self, batch, attn_debug):
         """Translate a batch of sentences."""
         with torch.no_grad():
-            if self.sample_from_topk != 0 or self.sample_from_topp != 0:
+            if self.sample_from_topk != 0 or self.sample_from_topk != 0:
                 decode_strategy = GreedySearch(
                     pad=self._tgt_pad_idx,
                     bos=self._tgt_bos_idx,
@@ -836,6 +840,7 @@ class Translator(Inference):
                     ratio=self.ratio,
                     ban_unk_token=self.ban_unk_token,
                 )
+            print("## decode_strategy:", decode_strategy)
             return self._translate_batch_with_strategy(batch, decode_strategy)
 
     def _run_encoder(self, batch):
@@ -934,7 +939,6 @@ class Translator(Inference):
 
             if parallel_paths > 1 or any_finished:
                 self.model.decoder.map_state(lambda state, dim: state[select_indices])
-
         return self.report_results(
             gold_score,
             batch,
@@ -990,7 +994,7 @@ class GeneratorLM(Inference):
             )
             self._log(warning_msg)
         with torch.no_grad():
-            if self.sample_from_topk != 0 or self.sample_from_topp != 0:
+            if True:# self.sample_from_topk != 0 or self.sample_from_topp != 0:
                 decode_strategy = GreedySearchLM(
                     pad=self._tgt_pad_idx,
                     bos=self._tgt_bos_idx,
@@ -1035,16 +1039,6 @@ class GeneratorLM(Inference):
                 )
             return self._translate_batch_with_strategy(batch, decode_strategy)
 
-    @classmethod
-    def split_src_to_prevent_padding(cls, src, src_len):
-        min_len_batch = torch.min(src_len).item()
-        target_prefix = None
-        if min_len_batch > 0 and min_len_batch < src.size(1):
-            target_prefix = src[:, min_len_batch:, :]
-            src = src[:, :min_len_batch, :]
-            src_len[:] = min_len_batch
-        return src, src_len, target_prefix
-
     def tile_to_beam_size_after_initial_step(self, fn_map_state, log_probs):
         if fn_map_state is not None:
             log_probs = fn_map_state(log_probs, dim=0)
@@ -1064,15 +1058,17 @@ class GeneratorLM(Inference):
             results (dict): The translation results.
         """
         # (0) Prep the components of the search.
+        print('### decode_strategy: ', decode_strategy)
         use_src_map = self.copy_attn
         parallel_paths = decode_strategy.parallel_paths  # beam_size
         batch_size = len(batch["srclen"])
 
         # (1) split src into src and target_prefix to avoid padding.
         src = batch["src"]
+        print('## src.size : ', src.size())
         src_len = batch["srclen"]
 
-        src, src_len, target_prefix = self.split_src_to_prevent_padding(src, src_len)
+        target_prefix = None
 
         # (2) init decoder
         self.model.decoder.init_state(src, None, None)
@@ -1094,13 +1090,12 @@ class GeneratorLM(Inference):
             src_map,
             target_prefix=target_prefix,
         )
-
         # (4) Begin decoding step by step:
         for step in range(decode_strategy.max_length):
+            print("## step", step)
             decoder_input = (
                 src if step == 0 else decode_strategy.current_predictions.view(-1, 1, 1)
             )
-
             log_probs, attn = self._decode_and_generate(
                 decoder_input,
                 None,
@@ -1115,7 +1110,7 @@ class GeneratorLM(Inference):
                 log_probs = self.tile_to_beam_size_after_initial_step(
                     fn_map_state, log_probs
                 )
-
+            print("## log_probs: ", log_probs)
             decode_strategy.advance(log_probs, attn)
             any_finished = any(
                 [any(sublist) for sublist in decode_strategy.is_finished_list]
@@ -1134,13 +1129,16 @@ class GeneratorLM(Inference):
             if parallel_paths > 1 or any_finished:
                 # select indexes in model state/cache
                 self.model.decoder.map_state(lambda state, dim: state[select_indices])
+            # if step > 2:
+            #     break
 
-        return self.report_results(
+        results = self.report_results(
             gold_score,
             batch,
             batch_size,
             decode_strategy,
         )
+        return results
 
     def _score_target(self, batch, enc_out, src_len, src_map):
         src = batch["src"]

@@ -491,12 +491,12 @@ class MultiHeadedAttention(torch.nn.Module):
             self.flash2
             and l > 256  # https://github.com/Dao-AILab/flash-attention/issues/591
         )
-
-        if (
-            self.max_relative_positions in [-1, 0]
-            and not return_attn
-            and query.device != torch.device("cpu")
-        ):
+        if False:
+            if (
+                self.max_relative_positions in [-1, 0]
+                and not return_attn
+                and query.device != torch.device("cpu")
+            ):
             causal = self.is_decoder and self.attn_type == "self" and mask is not None
             if self.is_decoder and self.attn_type == "self" and flash2:
                 if causal:
@@ -598,3 +598,4 @@ class MultiHeadedAttention(torch.nn.Module):
             all_reduce(attn_output)
 
         return attn_output, attn
+

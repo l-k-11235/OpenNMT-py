@@ -185,10 +185,15 @@ class TransformerDecoderLayerBase(nn.Module):
         raise NotImplementedError
 
     def _compute_dec_mask(self, tgt_pad_mask, future):
+        import pickle
+        with open('tgt_pad_mask.pickle', 'wb') as handle:
+            pickle.dump(tgt_pad_mask, handle, protocol=pickle.HIGHEST_PROTOCOL)
         tgt_len = tgt_pad_mask.size(-1)
+        batch_size = tgt_pad_mask.size(0)
+        # future = True ####
         if not future:  # apply future_mask, result mask in (B, T, T)
             future_mask = torch.ones(
-                [tgt_len, tgt_len],
+                [batch_size, tgt_len, tgt_len],
                 device=tgt_pad_mask.device,
                 dtype=torch.uint8,
             )
@@ -196,9 +201,14 @@ class TransformerDecoderLayerBase(nn.Module):
             if self.sliding_window > 0:
                 future_mask = future_mask.triu_(-self.sliding_window)
             future_mask = future_mask.bool()
-            future_mask = ~future_mask.view(1, tgt_len, tgt_len)
+            # future_mask = ~future_mask.view(1, tgt_len, tgt_len)
+            future_mask = ~future_mask.view(batch_size, tgt_len, tgt_len)
 
             dec_mask = torch.gt(tgt_pad_mask + future_mask, 0)
+            print("Here")
+            print(batch_size, tgt_pad_mask.size(), future_mask.size(), dec_mask.size())
+            # 4 torch.Size([4, 353, 353]) torch.Size([4, 1, 353]) torch.Size([4, 353, 353])
+
         else:  # only mask padding, result mask in (B, 1, T)
             dec_mask = tgt_pad_mask
         return dec_mask
@@ -346,9 +356,7 @@ class TransformerDecoderLayer(TransformerDecoderLayerBase):
             src_pad_mask = src_pad_mask.expand(-1, -1, dec_mask.size(3), -1)
             # mask now are (batch x 1 x tlen x s or t len)
             # 1 = heads to be expanded in MHA
-
         norm_layer_in = self.layer_norm_1(layer_in)
-
         self_attn, _ = self._forward_self_attn(
             norm_layer_in, dec_mask, step, return_attn=return_attn
         )
@@ -723,7 +731,6 @@ class TransformerLMDecoderLayer(TransformerDecoderLayerBase):
             dec_mask = dec_mask.expand(-1, -1, dec_mask.size(3), -1)
             # mask now are (batch x 1 x tlen x tlen)
             # 1 = heads to be expanded in MHA
-
         norm_layer_in = self.layer_norm_1(layer_in)
 
         attn_output, attns = self._forward_self_attn(
@@ -858,6 +865,7 @@ class TransformerLMDecoder(TransformerDecoderBase):
 
     def forward(self, tgt, enc_out=None, step=None, **kwargs):
         """Decode, possibly stepwise."""
+        print('## in TransformerLMDecoder.forward')
         if step == 0:
             self._init_cache(tgt)
         elif step is None:
@@ -871,22 +879,33 @@ class TransformerLMDecoder(TransformerDecoderBase):
 
         assert dec_out.dim() == 3  # batch x len x embedding_dim
 
+
         pad_idx = self.embeddings.word_padding_idx
         tgt_pad_mask = tgt[:, :, 0].eq(pad_idx).unsqueeze(1)  # [B, 1, T_tgt]
+        tgt_pad_mask = tgt[:, :, 0].eq(pad_idx).unsqueeze(1)  # [B, 1, T_tgt]
+        print('## tgt: ', tgt)
+        print('## tgt_pad_mask: ', tgt_pad_mask)
 
         with_align = kwargs.pop("with_align", False)
         return_attn = kwargs.pop("return_attn", False)
         return_attn = with_align or self._copy or return_attn
         assert not with_align, "TransformerLMDecoder does not support align"
 
+        c = 0
+        print('## type(self.transformer_layers): ', type(self.transformer_layers))
         for layer in self.transformer_layers:
+            c += 1
             dec_out, attn, _ = layer(
                 dec_out,
-                tgt_pad_mask,
+                tgt_pad_mask=tgt_pad_mask,
                 step=step,
                 with_align=with_align,
                 return_attn=return_attn,
             )
+            print('layer ', c, 'in decoder_forward', dec_out)
+            # if c > 3:
+            #     break
+
 
         dec_out = self.layer_norm(dec_out)
 
