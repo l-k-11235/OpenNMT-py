@@ -37,6 +37,7 @@ class InferenceEngine(object):
             translated_results = [
                 translated_bucket[i] for i in range(len(translated_bucket))
             ]
+            print('### translated_results:', translated_results)
             return translated_results
         # else:
         #     scores, preds = self.infer_file_parallel()
@@ -160,12 +161,13 @@ class InferenceEnginePY(InferenceEngine):
     #     scores, preds = self.translator._translate(
     #         infer_iter, infer_iter.transforms, self.opt.attn_debug, self.opt.align_debug
     #     )
-    #     return scores, preds
+    # return scores, preds
 
     def _translate(self, infer_iter):
         translated_bucket = {}
         for batch, bucket_idx in infer_iter:
             batch_inds_in_bucket = batch["ind_in_bucket"].cpu().tolist()
+
             batch_data = self.translator.translate_batch(batch, attn_debug=False)
             batch_scores = [_score[0].cpu().tolist() for _score in batch_data["scores"]]
             batch = batch_data["batch"]
@@ -196,6 +198,9 @@ class InferenceEnginePY(InferenceEngine):
                     "hyp_tokens": hyp_tokens,
                     "src_tokens": src_tokens,
                 }
+                print(ind_in_bucket, src_tokens)
+                print(hyp_tok_ids)
+                print(hyp_tokens)
         return translated_bucket
 
     def score(self, infer_iter):

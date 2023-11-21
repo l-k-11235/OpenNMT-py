@@ -386,6 +386,7 @@ class MultiHeadedAttention(torch.nn.Module):
            * output context vectors ``(batch, query_len, dim)``
            * Attention vector in heads ``(batch, head, query_len, key_len)``.
         """
+        print('## in  MultiHeadedAttention.forward')
         # 1) Project key, value, and query.
         # as a reminder at training layer_cache[0] remains False
         if self.layer_cache[0]:
@@ -463,49 +464,50 @@ class MultiHeadedAttention(torch.nn.Module):
             self.flash2
             and l > 256  # https://github.com/Dao-AILab/flash-attention/issues/591
         )
-
-        if (
-            self.max_relative_positions in [-1, 0]
-            and not return_attn
-            and query.device != torch.device("cpu")
-        ):
-            causal = self.is_decoder and self.attn_type == "self"
-            if self.is_decoder and self.attn_type == "self" and flash2:
-                if causal:
-                    window_size = (
-                        (-1, -1) if sliding_window == 0 else (sliding_window, 0)
-                    )
+        if False:
+            if (
+                self.max_relative_positions in [-1, 0]
+                and not return_attn
+                and query.device != torch.device("cpu")
+            ):
+                # Apply flash attention
+                causal = self.is_decoder and self.attn_type == "self"
+                if self.is_decoder and self.attn_type == "self" and flash2:
+                    if causal:
+                        window_size = (
+                            (-1, -1) if sliding_window == 0 else (sliding_window, 0)
+                        )
+                    else:
+                        window_size = (-1, -1)
+                    attn_output = self.flash_attn_func(
+                        query.transpose(1, 2),
+                        key.transpose(1, 2),
+                        value.transpose(1, 2),
+                        dropout_p=self.dropout_p,
+                        causal=causal,
+                        window_size=window_size,
+                    ).transpose(1, 2)
                 else:
-                    window_size = (-1, -1)
-                attn_output = self.flash_attn_func(
-                    query.transpose(1, 2),
-                    key.transpose(1, 2),
-                    value.transpose(1, 2),
-                    dropout_p=self.dropout_p,
-                    causal=causal,
-                    window_size=window_size,
-                ).transpose(1, 2)
-            else:
-                with torch.backends.cuda.sdp_kernel(
-                    enable_flash=False, enable_math=True, enable_mem_efficient=True
-                ):
-                    attn_output = F.scaled_dot_product_attention(
-                        query,
-                        key,
-                        value,
-                        ~mask if mask is not None else None,
-                        self.dropout_p,
-                        is_causal=causal,
-                    )
+                    with torch.backends.cuda.sdp_kernel(
+                        enable_flash=False, enable_math=True, enable_mem_efficient=True
+                    ):
+                        attn_output = F.scaled_dot_product_attention(
+                            query,
+                            key,
+                            value,
+                            ~mask if mask is not None else None,
+                            self.dropout_p,
+                            is_causal=causal,
+                        )
 
-            x = unshape(attn_output)
+                x = unshape(attn_output)
 
-            attn_output = self.maybe_ckpt(self.final_linear, x)
+                attn_output = self.maybe_ckpt(self.final_linear, x)
 
-            if self.parallel_gpu > 1:
-                dist.all_reduce(attn_output)
+                if self.parallel_gpu > 1:
+                    dist.all_reduce(attn_output)
 
-            return attn_output, None
+                return attn_output, None
 
         else:
             query /= math.sqrt(self.dim_per_head)
@@ -552,6 +554,7 @@ class MultiHeadedAttention(torch.nn.Module):
             scores = scores.float()
 
             if mask is not None:
+                print('## mask is not None')
                 # not 100% necessary but expand to nb of heads
                 mask = mask.expand(-1, self.head_count // self.parallel_gpu, -1, -1)
                 # now mask and scores have the same shape

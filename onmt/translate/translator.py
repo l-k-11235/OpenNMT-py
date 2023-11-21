@@ -646,6 +646,7 @@ class Inference(object):
         batch_offset=None,
         return_attn=False,
     ):
+        print('## in inference._decode_and_generate')
         if self.copy_attn:
             # Turn any copied words into UNKs.
             decoder_in = decoder_in.masked_fill(
@@ -656,7 +657,6 @@ class Inference(object):
         # and [batch, src_len, hidden] as enc_out
         # in case of inference tgt_len = 1, batch = beam times batch_size
         # in case of Gold Scoring tgt_len = actual length, batch = 1 batch
-
         dec_out, dec_attn = self.model.decoder(
             decoder_in,
             enc_out,
@@ -664,8 +664,11 @@ class Inference(object):
             step=step,
             return_attn=self.global_scorer.has_cov_pen or return_attn,
         )
-
+        print('## dec_out: ', dec_out)
+        print(dec_out.size())
         # Generator forward.
+        print('## self.copy_attn: ', self.copy_attn)
+        print('## type(self.model.generator): ', type(self.model.generator))
         if not self.copy_attn:
             if "std" in dec_attn:
                 attn = dec_attn["std"]
@@ -697,6 +700,7 @@ class Inference(object):
                 batch_offset=batch_offset,
             )
             scores = scores.view(-1, decoder_in.size(1), scores.size(-1))
+            print('# scores', scores)
             log_probs = scores.squeeze(1).log()
             # returns [(batch_size x beam_size) , vocab ] when 1 step
             # or [batch_size, tgt_len, vocab ] when full sentence
@@ -949,7 +953,6 @@ class Translator(Inference):
 
             if parallel_paths > 1 or any_finished:
                 self.model.decoder.map_state(lambda state, dim: state[select_indices])
-
         return self.report_results(
             gold_score,
             batch,
@@ -1011,7 +1014,7 @@ class GeneratorLM(Inference):
             else:
                 os.write(1, warning_msg.encode("utf-8"))
         with torch.no_grad():
-            if self.sample_from_topk != 0 or self.sample_from_topp != 0:
+            if True:# self.sample_from_topk != 0 or self.sample_from_topp != 0:
                 decode_strategy = GreedySearchLM(
                     pad=self._tgt_pad_idx,
                     bos=self._tgt_bos_idx,
@@ -1074,12 +1077,14 @@ class GeneratorLM(Inference):
             results (dict): The translation results.
         """
         # (0) Prep the components of the search.
+        print('### decode_strategy: ', decode_strategy)
         use_src_map = self.copy_attn
         parallel_paths = decode_strategy.parallel_paths  # beam_size
         batch_size = len(batch["srclen"])
 
         # (1) split src into src and target_prefix to avoid padding.
         src = batch["src"]
+        print('## src.size : ', src.size())
         src_len = batch["srclen"]
 
         target_prefix = None
@@ -1106,10 +1111,10 @@ class GeneratorLM(Inference):
         )
         # (4) Begin decoding step by step:
         for step in range(decode_strategy.max_length):
+            print("## step", step)
             decoder_input = (
                 src if step == 0 else decode_strategy.current_predictions.view(-1, 1, 1)
             )
-
             log_probs, attn = self._decode_and_generate(
                 decoder_input,
                 None,
@@ -1124,7 +1129,7 @@ class GeneratorLM(Inference):
                 log_probs = self.tile_to_beam_size_after_initial_step(
                     fn_map_state, log_probs
                 )
-
+            print("## log_probs: ", log_probs)
             decode_strategy.advance(log_probs, attn)
             any_finished = any(
                 [any(sublist) for sublist in decode_strategy.is_finished_list]
@@ -1146,6 +1151,9 @@ class GeneratorLM(Inference):
             if parallel_paths > 1 or any_finished:
                 # select indexes in model state/cache
                 self.model.decoder.map_state(lambda state, dim: state[select_indices])
+            # if step > 2:
+            #     break
+
         results = self.report_results(
             gold_score,
             batch,

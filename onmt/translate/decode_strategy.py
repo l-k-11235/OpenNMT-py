@@ -113,7 +113,6 @@ class DecodeStrategy(object):
 
         self.done = False
 
-        self.prefix_non_pad = None
 
     def get_device_from_enc_out(self, enc_out):
         if isinstance(enc_out, tuple):
@@ -147,12 +146,12 @@ class DecodeStrategy(object):
         src_map=None,
         device=None,
         target_prefix=None,
-        prefix_non_pad=None,
     ):
         """DecodeStrategy subclasses should override :func:`initialize()`.
 
         `initialize` should be called before all actions.
         used to prepare necessary ingredients for decode."""
+        print('## in DecodeStrategy.initialize')
 
         if device is None:
             device = torch.device("cpu")
@@ -170,9 +169,22 @@ class DecodeStrategy(object):
         self.is_finished_list = [
             [False for _ in range(self.parallel_paths)] for _ in range(self.batch_size)
         ]
-        prefix_non_pad = None
-        self.target_prefix = target_prefix
-        self.prefix_non_pad = prefix_non_pad
+
+        if target_prefix is not None:
+            print('target_prefix) is not None')
+            batch_size, seq_len, n_feats = target_prefix.size()
+            assert (
+                batch_size == self.batch_size * self.parallel_paths
+            ), "forced target_prefix should've extend to same number of path!"
+            target_prefix_words = target_prefix[:, :, 0]  # no features
+            target_prefix = target_prefix_words[:, 1:]  # remove bos
+
+            # fix length constraint and remove eos from count
+            prefix_non_pad = target_prefix.ne(self.pad).sum(dim=-1).tolist()
+            # self.max_length += max(prefix_non_pad) - 1
+            self.min_length += min(prefix_non_pad) - 1
+
+        self.target_prefix = target_prefix  # NOTE: forced prefix words
         return None, enc_out, src_len, src_map
 
     def __len__(self):
