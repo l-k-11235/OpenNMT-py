@@ -31,18 +31,21 @@ def evaluate(opt, inference_mode, input_file, out, method):
     start = time.time()
     if method == "file":
         engine.opt.src = input_file
-        scores, preds = engine.infer_file()
+        translated_results = engine.infer_file()
     elif method == "list":
         src = open(input_file, ("r")).readlines()
-        scores, preds = engine.infer_list(src)
+        translated_results = engine.infer_list(src)
+    scores = [_res["scores"] for _res in translated_results]
+    preds = [_res["preds"] for _res in translated_results]
     engine.terminate()
     dur = time.time() - start
     print(f"Time to generate {len(preds)} answers: {dur}s")
-    if inference_mode == "py":
-        scores = [
-            [_score.cpu().numpy().tolist() for _score in _scores] for _scores in scores
-        ]
+    # if inference_mode == "py":
+    #     scores = [
+    #         [_score.cpu().numpy().tolist() for _score in _scores] for _scores in scores
+    #     ]
     run_results = {"pred_answers": preds, "score": scores, "duration": dur}
+    print(run_results)
     output_filename = out + f"_{method}.json"
     with open(output_filename, "w") as f:
         json.dump(run_results, f, ensure_ascii=False, indent=2)

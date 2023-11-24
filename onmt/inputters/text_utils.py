@@ -198,7 +198,10 @@ def tensorify(vocabs, minibatch, device):
         for ex, indice in minibatch
     ]
     padidx = vocabs["src"][DefaultTokens.PAD]
-    tbatchsrc = pad_sequence(tbatchsrc, batch_first=True, padding_value=padidx)
+    reversed_tbatchsrc = [tbatchsrc[i].flip(dims=[0]) for i, _ in enumerate(tbatchsrc)]
+    tbatchsrc = pad_sequence(
+        reversed_tbatchsrc, batch_first=True, padding_value=padidx
+    ).flip(dims=[1])
     if "feats" in minibatch[0][0]["src"]:
         tbatchfs = [tbatchsrc]
         for feat_id in range(len(minibatch[0][0]["src"]["feats"])):
@@ -209,9 +212,12 @@ def tensorify(vocabs, minibatch, device):
                 for ex, indice in minibatch
             ]
             padidx = vocabs["src_feats"][feat_id][DefaultTokens.PAD]
+            reversed_tbatchfeat = [
+                tbatchfeat[i].flip(dims=[0]) for i, _ in enumerate(tbatchfeat)
+            ]
             tbatchfeat = pad_sequence(
-                tbatchfeat, batch_first=True, padding_value=padidx
-            )
+                reversed_tbatchfeat, batch_first=True, padding_value=padidx
+            ).flip(dims=[1])
             tbatchfs.append(tbatchfeat)
         tbatchsrc = torch.stack(tbatchfs, dim=2)
     else:
