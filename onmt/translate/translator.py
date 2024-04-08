@@ -46,8 +46,8 @@ def build_translator(opt, device_id=0, report_score=True, logger=None, out_file=
             report_score=report_score,
             logger=logger,
         )
-        if opt.stop_token is DefaultTokens.SEP:
-            translator.eos = translator.vocabs["tgt"].lookup_token("<0x0A>")
+        if opt.stop_token == str(DefaultTokens.SEP):
+            translator._tgt_eos_idx = translator.vocabs["tgt"].lookup_token("<0x0A>")
     else:
         translator = Translator.from_opt(
             model,
