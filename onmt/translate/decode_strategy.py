@@ -71,6 +71,7 @@ class DecodeStrategy(object):
         eos,
         unk,
         start,
+        stop,
         batch_size,
         parallel_paths,
         global_scorer,
@@ -87,6 +88,7 @@ class DecodeStrategy(object):
         self.eos = eos
         self.unk = unk
         self.start = start
+        self.stop = stop
 
         self.batch_size = batch_size
         self.parallel_paths = parallel_paths

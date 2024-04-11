@@ -47,7 +47,7 @@ def build_translator(opt, device_id=0, report_score=True, logger=None, out_file=
             logger=logger,
         )
         if opt.stop_token == str(DefaultTokens.SEP):
-            translator._tgt_eos_idx = translator.vocabs["tgt"].lookup_token("<0x0A>")
+            translator._tgt_stop_idx = translator.vocabs["tgt"].lookup_token("<0x0A>")
     else:
         translator = Translator.from_opt(
             model,
@@ -145,6 +145,7 @@ class Inference(object):
         self._tgt_bos_idx = vocabs["tgt"].lookup_token(DefaultTokens.BOS)
         self._tgt_unk_idx = vocabs["tgt"].lookup_token(DefaultTokens.UNK)
         self._tgt_sep_idx = vocabs["tgt"].lookup_token("<0x0A>")
+        self._tgt_stop_idx = None
         self._tgt_start_with = vocabs["tgt"].lookup_token(vocabs["decoder_start_token"])
         self._tgt_vocab_len = len(self._tgt_vocab)
 
@@ -1022,14 +1023,17 @@ class GeneratorLM(Inference):
         """Translate a batch of sentences."""
         max_length = 0 if scoring else self.max_length
         with torch.no_grad():
+            print('# self.sample_from_topk:', self.sample_from_topk)
+            print('# self.sample_from_topp: ', self.sample_from_topp)
             if self.sample_from_topk != 0 or self.sample_from_topp != 0:
-                self.beam_size = 1
+                print('# greed')
                 decode_strategy = GreedySearchLM(
                     pad=self._tgt_pad_idx,
                     bos=self._tgt_bos_idx,
                     eos=self._tgt_eos_idx,
                     unk=self._tgt_unk_idx,
                     start=self._tgt_start_with,
+                    stop=self._tgt_stop_idx,
                     n_best=self.n_best,
                     batch_size=len(batch["srclen"]),
                     global_scorer=self.global_scorer,
@@ -1047,6 +1051,7 @@ class GeneratorLM(Inference):
             else:
                 # TODO: support these blacklisted features
                 assert not self.dump_beam
+                print('# beam')
                 decode_strategy = BeamSearchLM(
                     self.beam_size,
                     batch_size=len(batch["srclen"]),

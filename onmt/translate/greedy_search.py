@@ -2,6 +2,13 @@ import torch
 from torch.nn.functional import softmax
 from onmt.translate.decode_strategy import DecodeStrategy
 
+#######################
+import pickle
+ROOT = "/nas-labs/LM/toy-lina-LLM/projet-senat/mixed_run/"
+with open(ROOT + 'vocabs', 'rb') as handle:
+    vocabs = pickle.load(handle)
+######################################
+
 
 def sample_topp(logits, keep_topp):
     sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=1)
@@ -22,10 +29,15 @@ def sample_topp(logits, keep_topp):
         sorted_indices,
         sorted_indices_to_keep,
     )
+    print('#  topp keep_indices:',  keep_indices.sum())
     return logits.masked_fill(~keep_indices, -10000)
 
+def retrieve_topk(logits, k):
+    top_values, top_indices = torch.topk(logits, k, dim=1)
+    return top_values, top_indices
 
 def sample_topk(logits, keep_topk):
+    print(keep_topk)
     top_values, _ = torch.topk(logits, keep_topk, dim=1)
     kth_best = top_values[:, -1].view([-1, 1])
     kth_best = kth_best.repeat([1, logits.shape[1]]).float()
@@ -33,6 +45,7 @@ def sample_topk(logits, keep_topk):
     # Set all logits that are not in the top-k to -10000.
     # This puts the probabilities close to 0.
     ignore = torch.lt(logits, kth_best)
+    print('# ignore', ignore.sum())
     return logits.masked_fill(ignore, -10000)
 
 
@@ -65,22 +78,41 @@ def sample_with_temperature(logits, sampling_temp, keep_topk, keep_topp):
         * topk_scores: Shaped ``(batch_size, 1)``. These
           are essentially ``(logits / sampling_temp)[topk_ids]``.
     """
-
+    print('## sample with temperature ##')
+    print('# sampling_temp:', sampling_temp)
+    print('# keep_topk:', keep_topk)
+    print('# keep_topp:', keep_topp)
+    # ##### #
+    # debug #
+    # ##### #
+    n = 10
+    top_scores, top_indices = retrieve_topk(logits, n)
+    top_indices = top_indices.cpu().numpy().tolist()[0]
+    print("# top_indices:", top_indices)
+    print("# top_scores:", top_scores)
+    top_tokens = [vocabs["tgt"].lookup_index(_id) for _id in top_indices]
+    print("# top_tokens:", type(top_tokens), top_tokens)
     if sampling_temp == 0.0 or keep_topk == 1:
         # For temp=0.0, take the argmax to avoid divide-by-zero errors.
         # keep_topk=1 is also equivalent to argmax.
         topk_scores, topk_ids = logits.topk(1, dim=-1)
-        if sampling_temp > 0:
-            topk_scores /= sampling_temp
+        # if sampling_temp > 0:
+        #     topk_scores /= sampling_temp
     else:
-        logits = torch.div(logits, sampling_temp)
         if keep_topp > 0:
             logits = sample_topp(logits, keep_topp)
         if keep_topk > 0:
             logits = sample_topk(logits, keep_topk)
+        
+        logits = torch.div(logits, sampling_temp)
         dist = torch.distributions.Categorical(logits=logits)
         topk_ids = dist.sample().view(-1, 1)
         topk_scores = logits.gather(dim=1, index=topk_ids)
+        top_id = topk_ids.cpu().numpy().tolist()[0][0]
+        print(top_id)
+        print("# tok", vocabs["tgt"].lookup_index(top_id))
+        print('# topk_ids: ', topk_ids)
+        print('# topk_scores: ', topk_scores)
     return topk_ids, topk_scores
 
 
@@ -124,6 +156,7 @@ class GreedySearch(DecodeStrategy):
         eos,
         unk,
         start,
+        stop,
         n_best,
         batch_size,
         global_scorer,
@@ -144,6 +177,7 @@ class GreedySearch(DecodeStrategy):
             eos,
             unk,
             start,
+            stop,
             batch_size,
             beam_size,
             global_scorer,
@@ -160,7 +194,7 @@ class GreedySearch(DecodeStrategy):
         self.topk_scores = None
         self.beam_size = beam_size
         self.n_best = n_best
-        self.parallel_paths = 1
+        self.parallel_paths = beam_size
 
     def initialize(
         self, enc_out, src_len, src_map=None, device=None, target_prefix=None
@@ -228,7 +262,8 @@ class GreedySearch(DecodeStrategy):
             attn (FloatTensor): Shaped ``(1, B, inp_seq_len)``.
         """
         self.align_select_indices()
-
+        forbidden_token = []
+        log_probs[:, self.eos] = -65504
         self.ensure_min_length(log_probs)
         self.ensure_unk_removed(log_probs)
         self.block_ngram_repeats(log_probs)
@@ -236,8 +271,13 @@ class GreedySearch(DecodeStrategy):
         topk_ids, self.topk_scores = self._pick(log_probs)
         self.beams_scores += self.topk_scores
 
-        self.is_finished_list = topk_ids.eq(self.eos).tolist()
-
+        if self.stop is not None:
+            print('##')
+            self.is_finished_list = topk_ids.eq(torch.tensor([self.eos, self.stop], device=topk_ids.device)).tolist()
+        else:
+            self.is_finished_list = topk_ids.eq(self.eos).tolist()
+        print(self.is_finished_list)
+            
         self.alive_seq = torch.cat([self.alive_seq, topk_ids], -1)
         if self.return_attention:
             if self.alive_attn is None:
