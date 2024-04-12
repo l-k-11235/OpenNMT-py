@@ -262,18 +262,26 @@ class GreedySearch(DecodeStrategy):
             attn (FloatTensor): Shaped ``(1, B, inp_seq_len)``.
         """
         self.align_select_indices()
-        forbidden_token = []
-        log_probs[:, self.eos] = -65504
+        #######
+        forbidden_tokens = ['▁-', '▁', '-', '--', '-.', ';', '▁.']
+        # # # forbidden_tokens = ['-', '--', '▁-', '</s>']
+        # forbidden_tokens = []
+        # # forbidden_tokens = ['▁-']
+        if forbidden_tokens:
+            for _token in forbidden_tokens:
+                forbidden_id = vocabs["tgt"].lookup_token(_token)
+                log_probs[:, forbidden_id] = -65504
+        ######
         self.ensure_min_length(log_probs)
         self.ensure_unk_removed(log_probs)
         self.block_ngram_repeats(log_probs)
 
         topk_ids, self.topk_scores = self._pick(log_probs)
         self.beams_scores += self.topk_scores
-
+    
         if self.stop is not None:
-            print('##')
-            self.is_finished_list = topk_ids.eq(torch.tensor([self.eos, self.stop], device=topk_ids.device)).tolist()
+            self.is_finished_list = (topk_ids.eq(self.eos) + topk_ids.eq(self.stop)).tolist()
+
         else:
             self.is_finished_list = topk_ids.eq(self.eos).tolist()
         print(self.is_finished_list)
