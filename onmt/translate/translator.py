@@ -79,6 +79,8 @@ class Inference(object):
             :class:`onmt.translate.greedy_search.GreedySearch`.
         random_sampling_temp (float): See
             :class:`onmt.translate.greedy_search.GreedySearch`.
+        remove_topm
+        remove_topm_proba
         stepwise_penalty (bool): Whether coverage penalty is applied every step
             or not.
         dump_beam (bool): Debugging option.
@@ -113,6 +115,8 @@ class Inference(object):
         random_sampling_topk=0,
         random_sampling_topp=0.0,
         random_sampling_temp=1.0,
+        remove_topm=-1,
+        remove_topm_proba=1,
         stepwise_penalty=None,
         dump_beam=False,
         block_ngram_repeat=0,
@@ -160,6 +164,8 @@ class Inference(object):
         self.random_sampling_temp = random_sampling_temp
         self.sample_from_topk = random_sampling_topk
         self.sample_from_topp = random_sampling_topp
+        self.remove_topm = remove_topm
+        self.remove_topm_proba = remove_topm_proba
 
         self.min_length = min_length
         self.ban_unk_token = ban_unk_token
@@ -1039,6 +1045,8 @@ class GeneratorLM(Inference):
                     sampling_temp=self.random_sampling_temp,
                     keep_topk=self.sample_from_topk,
                     keep_topp=self.sample_from_topp,
+                    remove_topm=self.remove_topm,
+                    remove_topm_proba=self.remove_topm_proba,
                     beam_size=self.beam_size,
                     ban_unk_token=self.ban_unk_token,
                 )

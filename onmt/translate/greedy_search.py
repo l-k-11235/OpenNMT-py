@@ -1,7 +1,8 @@
+import random
 import torch
 from torch.nn.functional import softmax
 from onmt.translate.decode_strategy import DecodeStrategy
-
+import pickle
 
 def sample_topp(logits, keep_topp):
     sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=1)
@@ -25,18 +26,33 @@ def sample_topp(logits, keep_topp):
     return logits.masked_fill(~keep_indices, -10000)
 
 
-def sample_topk(logits, keep_topk):
+def sample_topk(logits, keep_topk, remove_topm=-1, remove_topm_proba=0):
     top_values, _ = torch.topk(logits, keep_topk, dim=1)
+    # with open('/nas-labs/LM/toy-lina-LLM/controlled-generation/controlled_generation/tests/top_values.pickle', 'wb') as handle:
+    #     pickle.dump(top_values, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    # with open('/nas-labs/LM/toy-lina-LLM/controlled-generation/controlled_generation/tests/logits.pickle', 'wb') as handle:
+    #     pickle.dump(logits, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    # import sys
+    # sys.exit()
     kth_best = top_values[:, -1].view([-1, 1])
     kth_best = kth_best.repeat([1, logits.shape[1]]).float()
 
     # Set all logits that are not in the top-k to -10000.
     # This puts the probabilities close to 0.
     ignore = torch.lt(logits, kth_best)
+    if remove_topm > 0:
+        p = random.uniform(0, 1)
+        print(p)
+        if p < remove_topm_proba:
+            print('##')
+            mth_best = top_values[:, remove_topm].view([-1, 1])
+            mth_best = mth_best.repeat([1, logits.shape[1]]).float()
+            ignore = ignore * torch.lt(-logits, -mth_best)
+
     return logits.masked_fill(ignore, -10000)
 
 
-def sample_with_temperature(logits, sampling_temp, keep_topk, keep_topp):
+def sample_with_temperature(logits, sampling_temp, keep_topk, keep_topp, remove_topm, remove_topm_proba):
     """Select next tokens randomly from the top k possible next tokens.
 
     Samples from a categorical distribution over the ``keep_topk`` words using
@@ -56,6 +72,9 @@ def sample_with_temperature(logits, sampling_temp, keep_topk, keep_topp):
         keep_topp (float): Keep most likely words until the cumulated
             probability is greater than p. If used with keep_topk: both
             conditions will be applied
+
+        remove_topm
+        remove_topm_proba
 
     Returns:
         (LongTensor, FloatTensor):
@@ -77,7 +96,7 @@ def sample_with_temperature(logits, sampling_temp, keep_topk, keep_topp):
         if keep_topp > 0:
             logits = sample_topp(logits, keep_topp)
         if keep_topk > 0:
-            logits = sample_topk(logits, keep_topk)
+            logits = sample_topk(logits, keep_topk, remove_topm, remove_topm_proba)
         dist = torch.distributions.Categorical(logits=logits)
         topk_ids = dist.sample().view(-1, 1)
         topk_scores = logits.gather(dim=1, index=topk_ids)
@@ -135,6 +154,8 @@ class GreedySearch(DecodeStrategy):
         sampling_temp,
         keep_topk,
         keep_topp,
+        remove_topm,
+        remove_topm_proba,
         beam_size,
         ban_unk_token,
     ):
@@ -157,6 +178,8 @@ class GreedySearch(DecodeStrategy):
         self.sampling_temp = sampling_temp
         self.keep_topk = keep_topk
         self.keep_topp = keep_topp
+        self.remove_topm = remove_topm
+        self.remove_topm_proba = remove_topm_proba
         self.topk_scores = None
         self.beam_size = beam_size
         self.n_best = n_best
@@ -200,7 +223,8 @@ class GreedySearch(DecodeStrategy):
         # maybe fix some prediction at this step by modifying log_probs
         log_probs = self.target_prefixing(log_probs)
         topk_ids, topk_scores = sample_with_temperature(
-            log_probs, self.sampling_temp, self.keep_topk, self.keep_topp
+            log_probs, self.sampling_temp, self.keep_topk, self.keep_topp,
+            self.remove_topm, self.remove_topm_proba
         )
 
         return topk_ids, topk_scores
