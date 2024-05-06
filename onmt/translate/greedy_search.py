@@ -26,7 +26,20 @@ def sample_topp(logits, keep_topp):
     return logits.masked_fill(~keep_indices, -10000)
 
 
-def sample_topk(logits, keep_topk, remove_topm=-1, remove_topm_proba=0):
+def sample_without_topm(logits, remove_topm, remove_topm_prob):
+    p = random.uniform(0, 1)
+    print(p)
+    if p < remove_topm_prob:
+        print('#')
+        top_values, _ = torch.topk(logits, remove_topm + 1, dim=1)
+        mth_best = top_values[:, -1].view([-1, 1])
+        mth_best = mth_best.repeat([1, logits.shape[1]]).float()
+        ignore = torch.lt(-logits, -mth_best)
+        print(f'{ignore.sum()} tokens over {ignore.size()[1]} ignored by sample_without_topm')
+        return logits.masked_fill(ignore, -10000)
+    return logits
+
+def sample_topk(logits, keep_topk):
     top_values, _ = torch.topk(logits, keep_topk, dim=1)
     # with open('/nas-labs/LM/toy-lina-LLM/controlled-generation/controlled_generation/tests/top_values.pickle', 'wb') as handle:
     #     pickle.dump(top_values, handle, protocol=pickle.HIGHEST_PROTOCOL)
@@ -40,15 +53,7 @@ def sample_topk(logits, keep_topk, remove_topm=-1, remove_topm_proba=0):
     # Set all logits that are not in the top-k to -10000.
     # This puts the probabilities close to 0.
     ignore = torch.lt(logits, kth_best)
-    if remove_topm > 0:
-        p = random.uniform(0, 1)
-        print(p)
-        if p < remove_topm_proba:
-            print('##')
-            mth_best = top_values[:, remove_topm].view([-1, 1])
-            mth_best = mth_best.repeat([1, logits.shape[1]]).float()
-            ignore = ignore * torch.lt(-logits, -mth_best)
-
+    # print(f'{ignore.sum()} tokens over {ignore.size()[1]} ignored by sample_topk')
     return logits.masked_fill(ignore, -10000)
 
 
@@ -85,21 +90,24 @@ def sample_with_temperature(logits, sampling_temp, keep_topk, keep_topp, remove_
           are essentially ``(logits / sampling_temp)[topk_ids]``.
     """
 
-    if sampling_temp == 0.0 or keep_topk == 1:
-        # For temp=0.0, take the argmax to avoid divide-by-zero errors.
-        # keep_topk=1 is also equivalent to argmax.
-        topk_scores, topk_ids = logits.topk(1, dim=-1)
-        if sampling_temp > 0:
-            topk_scores /= sampling_temp
-    else:
-        logits = torch.div(logits, sampling_temp)
-        if keep_topp > 0:
-            logits = sample_topp(logits, keep_topp)
-        if keep_topk > 0:
-            logits = sample_topk(logits, keep_topk, remove_topm, remove_topm_proba)
-        dist = torch.distributions.Categorical(logits=logits)
-        topk_ids = dist.sample().view(-1, 1)
-        topk_scores = logits.gather(dim=1, index=topk_ids)
+    # if sampling_temp == 0.0 or keep_topk == 1:
+    #     # For temp=0.0, take the argmax to avoid divide-by-zero errors.
+    #     # keep_topk=1 is also equivalent to argmax.
+    #     topk_scores, topk_ids = logits.topk(1, dim=-1)
+    #     if sampling_temp > 0:
+    #         topk_scores /= sampling_temp
+    # else:
+    logits = torch.div(logits, sampling_temp)
+    if remove_topm > 0:
+        logits = sample_without_topm(logits, remove_topm, remove_topm_proba)
+    if keep_topp > 0:
+        logits = sample_topp(logits, keep_topp)
+    if keep_topk > 0:
+        logits = sample_topk(logits, keep_topk)
+
+    dist = torch.distributions.Categorical(logits=logits)
+    topk_ids = dist.sample().view(-1, 1)
+    topk_scores = logits.gather(dim=1, index=topk_ids)
     return topk_ids, topk_scores
 
 

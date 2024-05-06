@@ -163,6 +163,7 @@ class Inference(object):
         self.beam_size = beam_size
         self.random_sampling_temp = random_sampling_temp
         self.sample_from_topk = random_sampling_topk
+        print(self.sample_from_topk, random_sampling_topk)
         self.sample_from_topp = random_sampling_topp
         self.remove_topm = remove_topm
         self.remove_topm_proba = remove_topm_proba
@@ -1026,33 +1027,38 @@ class GeneratorLM(Inference):
     def translate_batch(self, batch, attn_debug, scoring=False):
         """Translate a batch of sentences."""
         max_length = 0 if scoring else self.max_length
+        print("~~~~~~~~~~~~~")
         with torch.no_grad():
-            if self.sample_from_topk != 0 or self.sample_from_topp != 0:
-                decode_strategy = GreedySearchLM(
-                    pad=self._tgt_pad_idx,
-                    bos=self._tgt_bos_idx,
-                    eos=self._tgt_eos_idx,
-                    unk=self._tgt_unk_idx,
-                    start=self._tgt_start_with,
-                    n_best=self.n_best,
-                    batch_size=len(batch["srclen"]),
-                    global_scorer=self.global_scorer,
-                    min_length=self.min_length,
-                    max_length=max_length,
-                    block_ngram_repeat=self.block_ngram_repeat,
-                    exclusion_tokens=self._exclusion_idxs,
-                    return_attention=attn_debug or self.replace_unk,
-                    sampling_temp=self.random_sampling_temp,
-                    keep_topk=self.sample_from_topk,
-                    keep_topp=self.sample_from_topp,
-                    remove_topm=self.remove_topm,
-                    remove_topm_proba=self.remove_topm_proba,
-                    beam_size=self.beam_size,
-                    ban_unk_token=self.ban_unk_token,
-                )
-            else:
+        #     if self.sample_from_topk != 0 or self.sample_from_topp != 0 or self.remove_topm > 0:
+        #         print('Sampling')
+        #         print(self.sample_from_topk, self.sample_from_topp, self.remove_topm, self.beam_size)
+        #         decode_strategy = GreedySearchLM(
+        #             pad=self._tgt_pad_idx,
+        #             bos=self._tgt_bos_idx,
+        #             eos=self._tgt_eos_idx,
+        #             unk=self._tgt_unk_idx,
+        #             start=self._tgt_start_with,
+        #             n_best=self.n_best,
+        #             batch_size=len(batch["srclen"]),
+        #             global_scorer=self.global_scorer,
+        #             min_length=self.min_length,
+        #             max_length=max_length,
+        #             block_ngram_repeat=self.block_ngram_repeat,
+        #             exclusion_tokens=self._exclusion_idxs,
+        #             return_attention=attn_debug or self.replace_unk,
+        #             sampling_temp=self.random_sampling_temp,
+        #             keep_topk=self.sample_from_topk,
+        #             keep_topp=self.sample_from_topp,
+        #             remove_topm=self.remove_topm,
+        #             remove_topm_proba=self.remove_topm_proba,
+        #             beam_size=self.beam_size,
+        #             ban_unk_token=self.ban_unk_token,
+        #         )
+        #     else:
+            if True:
                 # TODO: support these blacklisted features
                 assert not self.dump_beam
+                print('# here')
                 decode_strategy = BeamSearchLM(
                     self.beam_size,
                     batch_size=len(batch["srclen"]),
