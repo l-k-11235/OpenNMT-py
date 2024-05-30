@@ -414,6 +414,7 @@ class MultiHeadedAttention(torch.nn.Module):
         query: Tensor,
         mask: Optional[Tensor] = None,
         sliding_window: Optional[int] = 0,
+        sliding_window_gen: Optional[int] = 400,
         step: Optional[int] = 0,
         return_attn: Optional[bool] = False,
         self_attn_type: str = None,
@@ -526,8 +527,29 @@ class MultiHeadedAttention(torch.nn.Module):
                                 base=self.rotary_theta,
                                 device=self.rope.device,
                             )
-
-                    if sliding_window > 0 and key.size(2) > sliding_window:
+                    gen_length = step - self.src_len# self.layer_cache[1]["keys"].size(2) - self.src_len
+                    if gen_length > sliding_window_gen:
+                        print('##')
+                        print(self.src_len, self.src_len + sliding_window_gen)
+                        print('# st_ep:', step)
+                        print('# gen_length:', gen_length)
+                        print('# src_len:', self.src_len)
+                        print('# key', self.layer_cache[1]["keys"].size(2))
+                        print('# deleted pos:', self.src_len + sliding_window_gen)
+                        self.layer_cache[1]["keys"] = torch.cat(
+                            (self.layer_cache[1]["keys"][: , : , :self.src_len + sliding_window_gen, :],
+                             self.layer_cache[1]["keys"][: , : , self.src_len + sliding_window_gen + 1:, :]),
+                            dim=2
+                        )
+                        self.layer_cache[1]["values"] = torch.cat(
+                            (self.layer_cache[1]["values"][
+                                : , : , :self.src_len + sliding_window_gen, :],
+                             self.layer_cache[1]["values"][
+                                 : , : , self.src_len + sliding_window_gen + 1:, :]),
+                            dim=2
+                        )
+                        print(self.layer_cache[1]["keys"].size(), self.cos.size())
+                    elif sliding_window > 0 and key.size(2) > sliding_window:
                         self.layer_cache[1]["keys"] = self.layer_cache[1]["keys"][
                             :, :, 1:, :
                         ]
@@ -631,6 +653,9 @@ class MultiHeadedAttention(torch.nn.Module):
             and query.device != torch.device("cpu")
             and self.self_attn_type == "scaled-dot-flash"
         ):
+            print('####', l)
+            if step == 0:
+                self.src_len = l
             # Apply flash2 attention.
             causal = self.is_decoder and self.attn_type == "self" and mask is not None
             if self.is_decoder and self.attn_type == "self" and flash2:
